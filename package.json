@@ -1,0 +1,25 @@
+{
+  "name": "agent-trace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome lint .",
+    "lint:fix": "biome check --write .",
+    "gate": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.8",
+    "@types/node": "26.2.0",
+    "turbo": "2.10.9",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

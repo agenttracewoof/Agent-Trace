@@ -1,0 +1,8 @@
+# Normalize to LF in the repository regardless of the checkout platform.
+# CRLF in shell scripts breaks shebangs when CI runs them on Linux —
+# packages/verify/src/cli.ts is one, and CI runs on ubuntu-latest.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

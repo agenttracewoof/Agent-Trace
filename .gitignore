@@ -1,0 +1,32 @@
+# Arena tooling — оголошує, що це підрядна робота (07-MULTI-PROJECT-SETUP)
+.arena.json
+
+# Внутрішні документи не потрапляють у репозиторій клієнта (00-BOOTSTRAP).
+# Правило стоїть ДО першого коміту: інакше потрібен git rm --cached,
+# а в запушеному репо — переписування історії.
+*.md
+!README.md
+
+# Секрети
+.env
+.env.*
+!.env.example
+*.keypair.json
+id.json
+
+# Збірка і кеші
+node_modules/
+dist/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Локальний буфер SDK і архіви
+.agenttrace/
+
+# Редактори і ОС
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
