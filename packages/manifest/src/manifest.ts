@@ -15,7 +15,7 @@ const MANIFEST_DOMAIN = encoder.encode('agenttrace/manifest/v1')
  * а рішення «одне кодування на весь формат» коштує дешевше, ніж два.
  * `decisionId` — це UUID без дефісів, тобто ті самі 16 байтів, що йдуть у якір.
  */
-const hexDigest = (bytes: number) =>
+export const hexDigest = (bytes: number) =>
   z
     .string()
     .regex(new RegExp(`^[0-9a-f]{${bytes * 2}}$`), `expected ${bytes} bytes as lowercase hex`)
