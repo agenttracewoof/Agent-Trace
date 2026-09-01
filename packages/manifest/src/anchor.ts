@@ -8,6 +8,17 @@ export const ANCHOR_KIND = {
 } as const
 
 /**
+ * Планова ротація підписана попереднім ключем, аварійна — лише підтвердженням
+ * власника у дашборді. Різниця живе в самому якорі, а не в нашій БД: інакше
+ * розрив тяглості ідентичності був би видимий тільки нам, а FR-027 обіцяє
+ * протилежне — що приховати його неможливо.
+ */
+export const ROTATION_KIND = {
+  chained: 0,
+  administrative: 1,
+} as const
+
+/**
  * Байтові бюджети якорів. Усі поля фіксованої довжини — саме тому memo не може
  * перерости ліміт транзакції на довгому рішенні: розмір не залежить від кроків.
  */
@@ -58,6 +69,7 @@ function offsetsOf<T extends Record<string, number>>(
 }
 
 const AT = offsetsOf(DECISION_ANCHOR_LAYOUT)
+const ROTATION_AT = offsetsOf(KEY_ROTATION_ANCHOR_LAYOUT)
 
 export const decisionAnchorSchema = z.strictObject({
   version: z.literal(MANIFEST_VERSION),
@@ -91,6 +103,16 @@ function field(bytes: Uint8Array, at: number, size: number): string {
   return toHex(bytes.subarray(at, at + size))
 }
 
+function readTime(bytes: Uint8Array, at: number, name: string): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const value = view.getBigUint64(at, false)
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    // Мовчазне округлення тут зсунуло б час, а він входить у підпис.
+    throw new RangeError(`${name} ${value} exceeds a safe integer`)
+  }
+  return Number(value)
+}
+
 export function decodeDecisionAnchor(bytes: Uint8Array): DecisionAnchor {
   if (bytes.byteLength !== DECISION_ANCHOR_BYTES) {
     throw new RangeError(
@@ -104,20 +126,93 @@ export function decodeDecisionAnchor(bytes: Uint8Array): DecisionAnchor {
     throw new RangeError(`decodeDecisionAnchor: anchor kind ${bytes[AT.kind]} is not a decision`)
   }
 
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const decidedAt = view.getBigUint64(AT.decidedAt, false)
-  if (decidedAt > BigInt(Number.MAX_SAFE_INTEGER)) {
-    // Мовчазне округлення тут зсунуло б час рішення, а він входить у підпис.
-    throw new RangeError(`decodeDecisionAnchor: decidedAt ${decidedAt} exceeds a safe integer`)
-  }
-
   return decisionAnchorSchema.parse({
     version: MANIFEST_VERSION,
     kind: ANCHOR_KIND.decision,
     agentPubkey: field(bytes, AT.agentPubkey, DECISION_ANCHOR_LAYOUT.agentPubkey),
     root: field(bytes, AT.root, DECISION_ANCHOR_LAYOUT.root),
     decisionId: field(bytes, AT.decisionId, DECISION_ANCHOR_LAYOUT.decisionId),
-    decidedAt: Number(decidedAt),
+    decidedAt: readTime(bytes, AT.decidedAt, 'decodeDecisionAnchor: decidedAt'),
     signature: field(bytes, AT.signature, DECISION_ANCHOR_LAYOUT.signature),
   })
+}
+
+export const keyRotationAnchorSchema = z
+  .strictObject({
+    version: z.literal(MANIFEST_VERSION),
+    kind: z.literal(ANCHOR_KIND.keyRotation),
+    newPubkey: hexDigest(KEY_ROTATION_ANCHOR_LAYOUT.newPubkey),
+    prevPubkey: hexDigest(KEY_ROTATION_ANCHOR_LAYOUT.prevPubkey),
+    rotationKind: z.literal([ROTATION_KIND.chained, ROTATION_KIND.administrative]),
+    effectiveAt: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+    signature: hexDigest(KEY_ROTATION_ANCHOR_LAYOUT.signature),
+  })
+  .refine((value) => value.newPubkey !== value.prevPubkey, {
+    error: 'prevPubkey must differ from newPubkey',
+  })
+
+export type KeyRotationAnchor = z.infer<typeof keyRotationAnchorSchema>
+
+export function encodeKeyRotationAnchor(value: unknown): Bytes {
+  const rotation = keyRotationAnchorSchema.parse(value)
+  const bytes = new Uint8Array(KEY_ROTATION_ANCHOR_BYTES)
+  const view = new DataView(bytes.buffer)
+
+  bytes[ROTATION_AT.version] = rotation.version
+  bytes[ROTATION_AT.kind] = rotation.kind
+  bytes.set(fromHex(rotation.newPubkey), ROTATION_AT.newPubkey)
+  bytes.set(fromHex(rotation.prevPubkey), ROTATION_AT.prevPubkey)
+  bytes[ROTATION_AT.rotationKind] = rotation.rotationKind
+  view.setBigUint64(ROTATION_AT.effectiveAt, BigInt(rotation.effectiveAt), false)
+  bytes.set(fromHex(rotation.signature), ROTATION_AT.signature)
+
+  return bytes
+}
+
+export function decodeKeyRotationAnchor(bytes: Uint8Array): KeyRotationAnchor {
+  if (bytes.byteLength !== KEY_ROTATION_ANCHOR_BYTES) {
+    throw new RangeError(
+      `decodeKeyRotationAnchor: expected ${KEY_ROTATION_ANCHOR_BYTES} bytes, got ${bytes.byteLength}`,
+    )
+  }
+  if (bytes[ROTATION_AT.version] !== MANIFEST_VERSION) {
+    throw new RangeError(
+      `decodeKeyRotationAnchor: unknown format version ${bytes[ROTATION_AT.version]}`,
+    )
+  }
+  if (bytes[ROTATION_AT.kind] !== ANCHOR_KIND.keyRotation) {
+    throw new RangeError(
+      `decodeKeyRotationAnchor: anchor kind ${bytes[ROTATION_AT.kind]} is not a key rotation`,
+    )
+  }
+
+  return keyRotationAnchorSchema.parse({
+    version: MANIFEST_VERSION,
+    kind: ANCHOR_KIND.keyRotation,
+    newPubkey: field(bytes, ROTATION_AT.newPubkey, KEY_ROTATION_ANCHOR_LAYOUT.newPubkey),
+    prevPubkey: field(bytes, ROTATION_AT.prevPubkey, KEY_ROTATION_ANCHOR_LAYOUT.prevPubkey),
+    rotationKind: bytes[ROTATION_AT.rotationKind],
+    effectiveAt: readTime(bytes, ROTATION_AT.effectiveAt, 'decodeKeyRotationAnchor: effectiveAt'),
+    signature: field(bytes, ROTATION_AT.signature, KEY_ROTATION_ANCHOR_LAYOUT.signature),
+  })
+}
+
+/**
+ * Обидва якорі читаються з одного потоку memo за адресою агента, тож першим
+ * питанням завжди є «що це». Тримати відповідь тут, а не в кожного споживача,
+ * — єдиний спосіб не розмножити знання про перші два байти формату.
+ */
+export function anchorKindOf(bytes: Uint8Array): number {
+  const version = bytes[0]
+  const kind = bytes[1]
+  if (version === undefined || kind === undefined) {
+    throw new RangeError('anchorKindOf: payload is too short to be an anchor')
+  }
+  if (version !== MANIFEST_VERSION) {
+    throw new RangeError(`anchorKindOf: unknown format version ${version}`)
+  }
+  if (kind !== ANCHOR_KIND.decision && kind !== ANCHOR_KIND.keyRotation) {
+    throw new RangeError(`anchorKindOf: unknown anchor kind ${kind}`)
+  }
+  return kind
 }
