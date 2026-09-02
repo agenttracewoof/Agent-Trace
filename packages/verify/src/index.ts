@@ -4,3 +4,4 @@ export {
   KEY_ROTATION_ANCHOR_LAYOUT,
   MANIFEST_VERSION,
 } from '@agenttrace/manifest'
+export * from './verify.js'
