@@ -1,4 +1,5 @@
-import { getTableConfig } from 'drizzle-orm/pg-core'
+import type { SQL } from 'drizzle-orm'
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import { agentKeys, agents, decisionStatus, decisions, projects, rotationKind } from './core.js'
 
@@ -28,6 +29,9 @@ const sqlTypeOf = (table: TableName, name: string) => {
 
 const indexNames = (table: TableName) => config[table].indexes.map((entry) => entry.config.name)
 const checkNames = (table: TableName) => config[table].checks.map((entry) => entry.name)
+
+const dialect = new PgDialect()
+const renderCheck = (value: SQL) => dialect.sqlToQuery(value)
 
 /**
  * Індекс може стояти і на виразі, тож drizzle типізує його колонки як
@@ -115,6 +119,36 @@ describe('двійкові поля — hex фіксованої довжини,
     expect(checkNames('agentKeys')).toContain('agent_keys_rotation_proof_hex')
     expect(checkNames('projects')).toContain('projects_ingest_key_hash_hex')
   })
+
+  it.each([
+    ['projects', 1],
+    ['agentKeys', 2],
+    ['decisions', 2],
+  ] as const)('writes the pattern itself into %s, not just the width', (table, expected) => {
+    const hexChecks = config[table].checks.filter((entry) => entry.name.endsWith('_hex'))
+    expect(hexChecks).toHaveLength(expected)
+    for (const entry of hexChecks) {
+      expect(renderCheck(entry.value).sql).toContain('[0-9a-f]')
+    }
+  })
+})
+
+describe('DDL не містить звʼязаних параметрів', () => {
+  /**
+   * Інтерпольований у `sql` рядок стає параметром `$1`, і в запиті це правильно,
+   * а в DDL — ні: у міграцію їде літеральне `$1`, і CHECK або валить накатування,
+   * або створюється безглуздим. Перший же hex-патерн так і поїхав, тож стереже
+   * це тепер не уважність, а тест — і не один патерн, а всі CHECK разом.
+   */
+  it.each(['projects', 'agents', 'agentKeys', 'decisions'] as const)(
+    '%s renders every check with zero bound parameters',
+    (table) => {
+      const offenders = config[table].checks
+        .map((entry) => ({ name: entry.name, params: renderCheck(entry.value).params }))
+        .filter((entry) => entry.params.length > 0)
+      expect(offenders).toEqual([])
+    },
+  )
 })
 
 describe('історія ключів', () => {

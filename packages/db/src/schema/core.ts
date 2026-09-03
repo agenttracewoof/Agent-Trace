@@ -39,12 +39,31 @@ import {
  *    вони `timestamptz`, як і належить.
  */
 
+/**
+ * **RLS увімкнено на всіх таблицях, політик немає жодної.** У Postgres це і є
+ * deny-all: увімкнений RLS без політики забороняє все всім ролям, які його не
+ * обходять. Застосунок ходить service-роллю (`BYPASSRLS`), тож на його роботу
+ * це не впливає ніяк — і саме тому це страховка, а не механізм ізоляції.
+ * Ізоляцію орендарів робить застосунок за `project_id`, і перевіряє її тест
+ * T041; RLS ловить інший сценарій — витік anon-ключа, після якого без нього
+ * стало б можливим прочитати чужі рішення прямо з бази.
+ */
+
 /** `varchar` фіксованої довжини під hex; довжина в **байтах**, не символах. */
 const hex = (name: string, bytes: number) => varchar(name, { length: bytes * 2 })
 
-/** Довжину тримає тип, регістр і алфавіт — ця перевірка. Разом = «це hex». */
+/**
+ * Довжину тримає тип, регістр і алфавіт — ця перевірка. Разом = «це hex».
+ *
+ * Патерн іде через `sql.raw`, і це не стилістика. Інтерпольований рядок drizzle
+ * перетворює на **звʼязаний параметр**, а в DDL параметрів не буває: у міграцію
+ * поїхало б літеральне `~ $1`. Перевірка або впала б при накатуванні, або —
+ * гірше — створилася б безглуздою. Число підставляє код, не користувач, тож
+ * `raw` тут безпечний; загальний запобіжник — тест, який вимагає нуль
+ * параметрів у кожному CHECK.
+ */
 const hexCheck = (name: string, column: AnyPgColumn, bytes: number) =>
-  check(name, sql`${column} ~ ${`^[0-9a-f]{${bytes * 2}}$`}`)
+  check(name, sql`${column} ~ ${sql.raw(`'^[0-9a-f]{${bytes * 2}}$'`)}`)
 
 export const decisionStatus = pgEnum('decision_status', ['pending', 'anchored', 'failed'])
 
@@ -74,7 +93,7 @@ export const projects = pgTable(
     uniqueIndex('projects_ingest_key_hash_key').on(table.ingestKeyHash),
     hexCheck('projects_ingest_key_hash_hex', table.ingestKeyHash, 32),
   ],
-)
+).enableRLS()
 
 export const agents = pgTable(
   'agents',
@@ -89,7 +108,7 @@ export const agents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('agents_project_external_key').on(table.projectId, table.externalId)],
-)
+).enableRLS()
 
 /**
  * Історія ключів — впорядкований список, а не поле в `agents`. Інакше рішення,
@@ -161,7 +180,7 @@ export const agentKeys = pgTable(
       sql`${table.validTo} IS NULL OR ${table.validTo} > ${table.validFrom}`,
     ),
   ],
-)
+).enableRLS()
 
 /**
  * `steps`, `sources` і `outcome` — jsonb, бо кроки завжди читаються разом із
@@ -263,4 +282,4 @@ export const decisions = pgTable(
       sql`(${table.archivedAt} IS NULL) = (${table.archiveUrl} IS NULL)`,
     ),
   ],
-)
+).enableRLS()
