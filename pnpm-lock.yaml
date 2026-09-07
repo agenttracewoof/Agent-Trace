@@ -181,6 +181,9 @@ importers:
       '@agenttrace/manifest':
         specifier: workspace:*
         version: link:../manifest
+      '@agenttrace/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -197,6 +200,9 @@ importers:
 
   packages/shared:
     dependencies:
+      '@agenttrace/manifest':
+        specifier: workspace:*
+        version: link:../manifest
       zod:
         specifier: 4.4.3
         version: 4.4.3

@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@agenttrace/manifest": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {
