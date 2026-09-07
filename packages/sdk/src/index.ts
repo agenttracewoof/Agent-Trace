@@ -1,4 +1,5 @@
 export { MANIFEST_VERSION } from '@agenttrace/manifest'
+export * from './buffer.js'
 export * from './keystore.js'
 export * from './pipeline.js'
 export * from './recorder.js'
