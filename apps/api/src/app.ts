@@ -3,14 +3,19 @@ import { HTTPException } from 'hono/http-exception'
 import { ZodError } from 'zod'
 import { AppError, ERROR_STATUS, type ErrorCode, errorBody } from './errors.js'
 import { createLogger, type Logger } from './logger.js'
+import type { ProjectContext } from './middleware/auth.js'
 
 /**
  * Експортується не для зручності: без цього тип `createApp` посилався б на
  * неіменований тип із чужого модуля, і `index.ts` не зміг би реекспортувати `app`.
+ *
+ * `project` існує лише на маршрутах за `ingestAuth` — на `/health` і на
+ * публічному читанні його немає, і Hono про це не знає.
  */
 export interface Variables {
   requestId: string
   logger: Logger
+  project: ProjectContext
 }
 
 export interface AppOptions {
