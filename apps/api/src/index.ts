@@ -1,9 +1,24 @@
+import { createDb } from '@agenttrace/db'
 import { serve } from '@hono/node-server'
 import { createApp } from './app.js'
 import { createLogger } from './logger.js'
+import { agentRoutes } from './routes/agents.js'
 
 const logger = createLogger()
+
+const databaseUrl = process.env.DATABASE_URL
+if (databaseUrl === undefined || databaseUrl === '') {
+  // Падаємо на старті, а не на першому рішенні: приймання без бази прийняти
+  // нічого не може, і живий процес, який відповідає помилками, гірший за
+  // мертвий — деплой його не помітить.
+  logger.error('DATABASE_URL is not set')
+  process.exit(1)
+}
+
+const db = createDb(databaseUrl)
 const app = createApp({ logger })
+app.route('/v1', agentRoutes(db))
+
 const port = Number(process.env.API_PORT ?? 8787)
 
 const server = serve({ fetch: app.fetch, port }, (info) =>
