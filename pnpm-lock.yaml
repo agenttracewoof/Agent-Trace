@@ -35,6 +35,9 @@ importers:
       '@agenttrace/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@agenttrace/verify':
+        specifier: workspace:*
+        version: link:../../packages/verify
       '@hono/node-server':
         specifier: 2.1.0
         version: 2.1.0(hono@4.13.2)
