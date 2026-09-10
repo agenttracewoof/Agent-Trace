@@ -19,6 +19,7 @@ import { createApp } from '../app.js'
 import type { ErrorBody } from '../errors.js'
 import { silentLogger } from '../logger.js'
 import { createProject } from '../projects.js'
+import { MAX_BODY_BYTES, MAX_STEPS } from '../quota.js'
 import { agentRoutes } from './agents.js'
 import { decisionRoutes } from './decisions.js'
 
@@ -287,6 +288,109 @@ describe('ідемпотентність за decisionId', () => {
 
     expect(response.status).toBe(400)
     expect(await storedDecisions()).toHaveLength(1)
+  })
+})
+
+describe('квоти й стелі (FR-030)', () => {
+  const usedToday = async () =>
+    (
+      await client.query<{ n: number }>(
+        'SELECT coalesce(sum(decisions_count),0)::int AS n FROM usage_daily',
+      )
+    ).rows[0]?.n
+
+  it('charges an accepted decision against the daily quota', async () => {
+    await submit(keyOfFirst, await honestEnvelope())
+
+    expect(await usedToday()).toBe(1)
+  })
+
+  it('does not charge the same decision twice when it is resent', async () => {
+    // Повтор після обриву звʼязку — норма (FR-007). Списувати за нього означало б,
+    // що поганий канал з'їдає квоту швидше, ніж агент ухвалює рішення.
+    const envelope = await honestEnvelope()
+    await submit(keyOfFirst, envelope)
+    await submit(keyOfFirst, envelope)
+
+    expect(await usedToday()).toBe(1)
+  })
+
+  it('refuses past the quota as temporary, and stores nothing', async () => {
+    await client.query('UPDATE projects SET daily_quota = 1')
+    await submit(keyOfFirst, await honestEnvelope())
+
+    const response = await submit(keyOfFirst, await honestEnvelope())
+    const json = await bodyOf<ErrorBody>(response)
+
+    expect(response.status).toBe(429)
+    expect(json.error.code).toBe('RATE_LIMITED')
+    // Рішення понад квоту не має лишити по собі рядка — інакше квота рахує одне,
+    // а база містить інше.
+    expect(await storedDecisions()).toHaveLength(1)
+    expect(await usedToday()).toBe(1)
+  })
+
+  it('refuses a decision with more steps than allowed, before hashing them', async () => {
+    // Кроки приватні навмисно: без вмісту вони вміщаються під стелю розміру,
+    // тож цей тест перевіряє саме стелю кроків, а не спрацьовує об розмір.
+    // Корінь цього манифесту зі стеками не сходиться — і те, що у відповіді
+    // стеля кроків, а не `steps-root-mismatch`, і є доказом порядку перевірок:
+    // рахувати хеші 257 кроків, щоб потім відхилити їх за кількістю, безглуздо.
+    const manifest = await honestManifest(agentKey)
+    const many: Manifest['steps'] = Array.from({ length: MAX_STEPS + 1 }, () => ({
+      type: 'source.read',
+      private: true,
+      inputHash: 'ab'.repeat(32),
+      outputHash: 'cd'.repeat(32),
+    }))
+    const envelope = await sign({ ...manifest, steps: many }, agentKey)
+
+    const response = await submit(keyOfFirst, envelope)
+    const json = await bodyOf<ErrorBody>(response)
+
+    expect(response.status).toBe(400)
+    expect(json.error.details).toMatchObject({ limit: MAX_STEPS })
+    expect(await storedDecisions()).toEqual([])
+  })
+
+  it('refuses a body past the size ceiling without reading it in', async () => {
+    const manifest = await honestManifest(agentKey)
+    const envelope = await sign(manifest, agentKey)
+    const bloated = JSON.stringify(envelope).padEnd(MAX_BODY_BYTES + 1_024, ' ')
+
+    const response = await app.request('/v1/decisions', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${keyOfFirst}`,
+        'content-type': 'application/json',
+        'content-length': String(bloated.length),
+      },
+      body: bloated,
+    })
+
+    expect(response.status).toBe(400)
+    expect(await storedDecisions()).toEqual([])
+  })
+
+  it('refuses once the project sends faster than it may', async () => {
+    const strict = createApp({ logger: silentLogger() })
+    strict.route('/v1', agentRoutes(db))
+    strict.route(
+      '/v1',
+      decisionRoutes(db, { publicAppUrl: PUBLIC_APP_URL, rateLimit: { burst: 1, perSecond: 0 } }),
+    )
+
+    const send = async () =>
+      (
+        await strict.request('/v1/decisions', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${keyOfFirst}`, 'content-type': 'application/json' },
+          body: JSON.stringify(await honestEnvelope()),
+        })
+      ).status
+
+    expect(await send()).toBe(200)
+    expect(await send()).toBe(429)
   })
 })
 

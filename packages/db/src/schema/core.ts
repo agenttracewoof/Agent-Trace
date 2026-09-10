@@ -3,11 +3,13 @@ import {
   type AnyPgColumn,
   bigint,
   check,
+  date,
   index,
   integer,
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -281,5 +283,32 @@ export const decisions = pgTable(
       'decisions_archive_shape',
       sql`(${table.archivedAt} IS NULL) = (${table.archiveUrl} IS NULL)`,
     ),
+  ],
+).enableRLS()
+
+/**
+ * Лічильник спожитого за добу — окрема таблиця, а не `count(*)` по `decisions`,
+ * і це не оптимізація. `decisions` **витісняється** після підтвердженого
+ * вивантаження (FR-028), тож рахунок по ній зменшувався б разом із витісненням:
+ * проєкт, який вичерпав квоту, отримав би її назад рівно тоді, коли retention
+ * прибрав його рядки. Тут же лежить те, що FR-025 показує власнику як
+ * споживання проти ліміту, і воно мусить пережити витіснення.
+ *
+ * Доба — **UTC**, і це видно у типі: `date` без часової зони. Локальна доба
+ * означала б, що межа квоти їздить із переїздом сервера, а рішення, прийняте
+ * о 23:30, потрапляло б то в один день, то в інший.
+ */
+export const usageDaily = pgTable(
+  'usage_daily',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    day: date('day').notNull(),
+    decisionsCount: integer('decisions_count').notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.day] }),
+    check('usage_daily_count_non_negative', sql`${table.decisionsCount} >= 0`),
   ],
 ).enableRLS()

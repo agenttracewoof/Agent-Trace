@@ -6,9 +6,18 @@ import { zValidator } from '@hono/zod-validator'
 import { and, eq } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import type { Variables } from '../app.js'
 import { AppError } from '../errors.js'
 import { ingestAuth, projectByIngestKeyHash } from '../middleware/auth.js'
+import {
+  assertStepCountWithinLimit,
+  bodyTooLarge,
+  chargeDailyQuota,
+  createRateLimiter,
+  MAX_BODY_BYTES,
+  type RateLimit,
+} from '../quota.js'
 
 /**
  * Правило приймання одне: **беремо рішення лише тоді, коли verifier, маючи сам
@@ -33,7 +42,15 @@ type Db<
 export interface DecisionRoutesConfig {
   /** Звідки складається публічне посилання у відповіді. */
   readonly publicAppUrl: string
+  /**
+   * Темп приймання. За замовчуванням — сплеск на 120 запитів із поповненням
+   * 10/с: достатньо, щоб SDK злив накопичену за обрив чергу (FR-007), і замало,
+   * щоб один проєкт зайняв процес собою.
+   */
+  readonly rateLimit?: RateLimit
 }
+
+const DEFAULT_RATE_LIMIT: RateLimit = { burst: 120, perSecond: 10 }
 
 /**
  * У форматі `decisionId` — 32 hex без дефісів: у якорі це 16 сирих байтів, і
@@ -96,7 +113,12 @@ function rowFor(
 /**
  * `decisionId` генерує SDK, тож повтор після обриву звʼязку приходить із тим
  * самим ідентифікатором (FR-007). `onConflictDoNothing` розводить два випадки
- * без транзакції й без гонки: рядок або зʼявився зараз, або вже був.
+ * без гонки: рядок або зʼявився зараз, або вже був.
+ *
+ * Запис і списання квоти — одна транзакція, і це не акуратність, а вимога:
+ * рішення понад квоту не має лишити по собі рядка, а повтор не має списати
+ * квоту вдруге за те саме рішення. Тому квота списується **лише** на гілці,
+ * де вставка справді відбулась, і будь-яка відмова після неї відкочує обидві дії.
  */
 async function storeDecision<
   TQueryResult extends PgQueryResultHKT,
@@ -106,33 +128,39 @@ async function storeDecision<
   envelope: SignedManifest,
   projectId: string,
   key: SigningKey,
+  dailyQuota: number,
 ): Promise<string> {
   const row = rowFor(envelope.manifest, envelope.signature, projectId, key)
 
-  const [inserted] = await db
-    .insert(decisions)
-    .values(row)
-    .onConflictDoNothing()
-    .returning({ status: decisions.status })
+  return db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(decisions)
+      .values(row)
+      .onConflictDoNothing()
+      .returning({ status: decisions.status })
 
-  if (inserted !== undefined) return inserted.status
+    if (inserted !== undefined) {
+      await chargeDailyQuota(tx, projectId, dailyQuota)
+      return inserted.status
+    }
 
-  const [existing] = await db
-    .select({ status: decisions.status, root: decisions.root, signature: decisions.signature })
-    .from(decisions)
-    .where(eq(decisions.id, row.id))
-    .limit(1)
+    const [existing] = await tx
+      .select({ status: decisions.status, root: decisions.root, signature: decisions.signature })
+      .from(decisions)
+      .where(eq(decisions.id, row.id))
+      .limit(1)
 
-  if (existing === undefined) throw new Error('storeDecision: conflicting row disappeared')
+    if (existing === undefined) throw new Error('storeDecision: conflicting row disappeared')
 
-  // Повтор і підміна приходять однаково — з уже відомим ідентифікатором. Мовчазне
-  // «ок» другому манифесту означало б, що публічне посилання показує не те
-  // рішення, про яке відзвітували відправнику.
-  if (existing.root !== row.root || existing.signature !== row.signature) {
-    throw new AppError('INVALID_INPUT', 'This decision id already holds a different decision')
-  }
+    // Повтор і підміна приходять однаково — з уже відомим ідентифікатором. Мовчазне
+    // «ок» другому манифесту означало б, що публічне посилання показує не те
+    // рішення, про яке відзвітували відправнику.
+    if (existing.root !== row.root || existing.signature !== row.signature) {
+      throw new AppError('INVALID_INPUT', 'This decision id already holds a different decision')
+    }
 
-  return existing.status
+    return existing.status
+  })
 }
 
 export function decisionRoutes<
@@ -141,17 +169,33 @@ export function decisionRoutes<
 >(db: Db<TQueryResult, TFullSchema>, config: DecisionRoutesConfig) {
   const router = new Hono<{ Variables: Variables }>()
   const publicAppUrl = config.publicAppUrl.replace(/\/+$/, '')
+  const allow = createRateLimiter(config.rateLimit ?? DEFAULT_RATE_LIMIT)
 
   router.use('*', ingestAuth(projectByIngestKeyHash(db)))
 
   router.post(
     '/decisions',
+    // Порядок тут і є захистом: розмір відсікається до читання тіла, темп — до
+    // будь-якої роботи, кроки — до хешування, і лише потім витрачається квота.
+    bodyLimit({
+      maxSize: MAX_BODY_BYTES,
+      onError: () => {
+        throw bodyTooLarge()
+      },
+    }),
     zValidator('json', submitDecisionRequestSchema, (result) => {
       if (!result.success) throw result.error
     }),
     async (c) => {
       const envelope = c.req.valid('json')
-      const projectId = c.get('project').id
+      const project = c.get('project')
+      const projectId = project.id
+
+      if (!allow(projectId)) {
+        throw new AppError('RATE_LIMITED', 'This project is sending decisions too quickly')
+      }
+
+      assertStepCountWithinLimit(envelope.manifest.steps.length)
 
       const verdict = await verifyDecision({ manifest: envelope })
       if (verdict.status !== 'pending') {
@@ -165,7 +209,7 @@ export function decisionRoutes<
         throw new AppError('INVALID_INPUT', 'No agent of this project is registered with that key')
       }
 
-      const status = await storeDecision(db, envelope, projectId, key)
+      const status = await storeDecision(db, envelope, projectId, key, project.dailyQuota)
 
       return c.json({
         status,

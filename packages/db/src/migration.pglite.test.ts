@@ -109,7 +109,7 @@ afterAll(async () => {
 })
 
 describe('міграція накочується на справжній Postgres', () => {
-  it('creates the four tables and takes a valid decision', async () => {
+  it('creates every table the schema declares and takes a valid decision', async () => {
     const tables = await db.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public' ORDER BY table_name`,
@@ -119,6 +119,7 @@ describe('міграція накочується на справжній Postgr
       'agents',
       'decisions',
       'projects',
+      'usage_daily',
     ])
 
     await insertDecision('44444444-4444-4444-8444-444444444444')

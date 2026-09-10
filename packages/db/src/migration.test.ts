@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
-import { agentKeys, agents, decisions, projects } from './schema/core.js'
+import { agentKeys, agents, decisions, projects, usageDaily } from './schema/core.js'
 
 /**
  * Міграція — це артефакт, а не код: її пише генератор, а накочують один раз
@@ -23,13 +23,18 @@ const migrations = readdirSync(dir)
 
 const sql = migrations.map((name) => readFileSync(dir + name, 'utf8')).join('\n')
 
-const tableNames = [projects, agents, agentKeys, decisions].map(
+const tableNames = [projects, agents, agentKeys, decisions, usageDaily].map(
   (table) => getTableConfig(table).name,
 )
 
-describe('перша міграція', () => {
-  it('exists as a single file — the schema has never been changed yet', () => {
-    expect(migrations).toEqual(['0000_init.sql'])
+describe('міграції', () => {
+  /**
+   * Перелік поіменний навмисно. Міграція, що зʼявилась непоміченою, — це або
+   * забутий `db:generate` після правки схеми, або чужий файл у теці, яку
+   * накочують без питань. Оновлювати цей рядок має бути свідомою дією.
+   */
+  it('are exactly the ones we know about, in order', () => {
+    expect(migrations).toEqual(['0000_init.sql', '0001_usage_daily.sql'])
   })
 
   it('creates every table the schema declares', () => {
@@ -40,7 +45,7 @@ describe('перша міграція', () => {
 })
 
 describe('RLS deny-all', () => {
-  it.each(['projects', 'agents', 'agent_keys', 'decisions'])(
+  it.each(['projects', 'agents', 'agent_keys', 'decisions', 'usage_daily'])(
     'turns row level security on for %s',
     (name) => {
       expect(sql).toContain(`ALTER TABLE "${name}" ENABLE ROW LEVEL SECURITY;`)
