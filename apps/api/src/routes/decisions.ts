@@ -8,6 +8,7 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { Variables } from '../app.js'
+import { asUuid } from '../decision-id.js'
 import { AppError } from '../errors.js'
 import { ingestAuth, projectByIngestKeyHash } from '../middleware/auth.js'
 import {
@@ -51,14 +52,6 @@ export interface DecisionRoutesConfig {
 }
 
 const DEFAULT_RATE_LIMIT: RateLimit = { burst: 120, perSecond: 10 }
-
-/**
- * У форматі `decisionId` — 32 hex без дефісів: у якорі це 16 сирих байтів, і
- * саме цю форму копіює той, хто читає ланцюг. У базі колонка `uuid`, тож дефіси
- * ставляться на межі й ніде більше — посилання назовні лишається у формі ланцюга.
- */
-const asUuid = (decisionId: string): string =>
-  `${decisionId.slice(0, 8)}-${decisionId.slice(8, 12)}-${decisionId.slice(12, 16)}-${decisionId.slice(16, 20)}-${decisionId.slice(20)}`
 
 interface SigningKey {
   readonly agentId: string
@@ -171,10 +164,17 @@ export function decisionRoutes<
   const publicAppUrl = config.publicAppUrl.replace(/\/+$/, '')
   const allow = createRateLimiter(config.rateLimit ?? DEFAULT_RATE_LIMIT)
 
-  router.use('*', ingestAuth(projectByIngestKeyHash(db)))
+  /**
+   * Ключ перевіряється в ланцюжку самого маршруту, а не через `router.use('*')`:
+   * зірочка в роутері, змонтованому через `app.route('/v1', …)`, накриває весь
+   * `/v1/*` — і тоді публічне читання (T028) теж почало б вимагати ingest-ключ.
+   * Пояснення повністю — в `agents.ts`.
+   */
+  const auth = ingestAuth(projectByIngestKeyHash(db))
 
   router.post(
     '/decisions',
+    auth,
     // Порядок тут і є захистом: розмір відсікається до читання тіла, темп — до
     // будь-якої роботи, кроки — до хешування, і лише потім витрачається квота.
     bodyLimit({

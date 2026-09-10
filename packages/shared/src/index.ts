@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export * from './ingest.js'
+export * from './public.js'
 
 /** Єдиний формат помилки на всіх межах API — 02-CODE-RULES. */
 export const errorCodeSchema = z.enum([

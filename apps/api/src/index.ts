@@ -4,6 +4,7 @@ import { createApp } from './app.js'
 import { createLogger } from './logger.js'
 import { agentRoutes } from './routes/agents.js'
 import { decisionRoutes } from './routes/decisions.js'
+import { publicRoutes } from './routes/public.js'
 
 const logger = createLogger()
 
@@ -25,6 +26,8 @@ const db = createDb(required('DATABASE_URL'))
 const app = createApp({ logger })
 app.route('/v1', agentRoutes(db))
 app.route('/v1', decisionRoutes(db, { publicAppUrl: required('PUBLIC_APP_URL') }))
+// Без `ingestAuth` навмисно: посилання на рішення відкривається без ключа (FR-012).
+app.route('/v1', publicRoutes(db))
 
 const port = Number(process.env.API_PORT ?? 8787)
 

@@ -127,10 +127,20 @@ export function agentRoutes<
 >(db: Db<TQueryResult, TFullSchema>) {
   const router = new Hono<{ Variables: Variables }>()
 
-  router.use('*', ingestAuth(projectByIngestKeyHash(db)))
+  /**
+   * Авторизація стоїть **у самому маршруті**, а не `router.use('*', …)`.
+   * Роутери зводяться в один застосунок через `app.route('/v1', …)`, і
+   * зірочка в такому роутері накриває весь `/v1/*` — включно з чужими
+   * маршрутами, яких цей файл не бачить. Саме так публічне читання (T028)
+   * одного разу поїхало під ingest-ключ. Тут же ланцюжок хендлерів робить
+   * «цей маршрут за ключем» властивістю маршруту: додати новий і не помітити,
+   * що він відкритий, неможливо — його видно в тому самому рядку.
+   */
+  const auth = ingestAuth(projectByIngestKeyHash(db))
 
   router.post(
     '/agents',
+    auth,
     // Хук кидає помилку замість того, щоб дати валідатору відповісти своїм
     // форматом: у API один формат помилки, і SDK розбирає рівно його.
     zValidator('json', registerAgentRequestSchema, (result) => {
