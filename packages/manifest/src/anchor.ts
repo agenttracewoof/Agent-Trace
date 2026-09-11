@@ -198,6 +198,47 @@ export function decodeKeyRotationAnchor(bytes: Uint8Array): KeyRotationAnchor {
 }
 
 /**
+ * **Кодування payload'а якоря всередині memo — hex нижнього регістру** (§15).
+ * Зафіксовано на T029, до першого якоря в ланцюгу.
+ *
+ * Вибору тут менше, ніж здається: `spl-memo` валідує вміст інструкції як UTF-8
+ * і відхиляє все інше, тож сирі 154 байти в memo не покласти. З текстових
+ * кодувань hex — єдине, яке вже вживає весь формат (§1), тобто не додає ані
+ * залежності в пакет, який мусить лишатися чистим, ані другого алфавіту, у
+ * якому реалізатор іншою мовою може помилитися. Ціна — подвоєння: 308 символів
+ * для рішення і 278 для ротації проти ліміту транзакції в 1232 байти, тобто
+ * запас лишається кратним.
+ *
+ * Це рішення **незворотне після першого якоря**: опублікований memo переграти
+ * неможливо, а читач, який чекає hex, не прочитає base64.
+ */
+const ANCHOR_MEMO_PATTERN = /^(?:[0-9a-f]{2})+$/
+
+/** Довший із двох якорів. Усе, що більше, нашим якорем не є за побудовою. */
+export const ANCHOR_MEMO_MAX_BYTES = Math.max(DECISION_ANCHOR_BYTES, KEY_ROTATION_ANCHOR_BYTES)
+
+export function encodeAnchorMemo(payload: Uint8Array): string {
+  if (payload.byteLength === 0 || payload.byteLength > ANCHOR_MEMO_MAX_BYTES) {
+    throw new RangeError(
+      `encodeAnchorMemo: expected 1..${ANCHOR_MEMO_MAX_BYTES} bytes, got ${payload.byteLength}`,
+    )
+  }
+  return toHex(payload)
+}
+
+/**
+ * Повертає `undefined`, а не кидає, і це не м'якість: за адресою агента лежать
+ * **чужі** memo теж — тегувати транзакцію будь-якою адресою може будь-хто. Читач
+ * історії проходить потік записів, і виняток на першому сторонньому рядку
+ * перетворив би чужий memo на обрив нашої перевірки.
+ */
+export function decodeAnchorMemo(memo: string): Bytes | undefined {
+  if (memo.length > ANCHOR_MEMO_MAX_BYTES * 2) return undefined
+  if (!ANCHOR_MEMO_PATTERN.test(memo)) return undefined
+  return fromHex(memo)
+}
+
+/**
  * Обидва якорі читаються з одного потоку memo за адресою агента, тож першим
  * питанням завжди є «що це». Тримати відповідь тут, а не в кожного споживача,
  * — єдиний спосіб не розмножити знання про перші два байти формату.

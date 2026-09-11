@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANCHOR_KIND,
+  ANCHOR_MEMO_MAX_BYTES,
   anchorKindOf,
+  decodeAnchorMemo,
   DECISION_ANCHOR_BYTES,
   DECISION_ANCHOR_LAYOUT,
   type DecisionAnchor,
   decodeDecisionAnchor,
   decodeKeyRotationAnchor,
+  encodeAnchorMemo,
   encodeDecisionAnchor,
   encodeKeyRotationAnchor,
   KEY_ROTATION_ANCHOR_BYTES,
@@ -191,17 +194,62 @@ describe('anchorKindOf', () => {
   })
 })
 
-const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4
-
 describe('anchor payload budget', () => {
   it('matches the layouts documented in PLAN.md', () => {
     expect(DECISION_ANCHOR_BYTES).toBe(154)
     expect(KEY_ROTATION_ANCHOR_BYTES).toBe(139)
   })
 
-  it('leaves room inside a Solana transaction once base64-encoded', () => {
+  it('leaves room inside a Solana transaction in the encoding memo actually carries', () => {
+    // Раніше тут стояв base64 — кодування ще не було обране, і тест міряв
+    // здогадку. З T029 воно обране (hex, §15), тож міряти треба його: удвічі
+    // довше за base64, і саме це число має вкладатися в бюджет.
     for (const bytes of [DECISION_ANCHOR_BYTES, KEY_ROTATION_ANCHOR_BYTES]) {
-      expect(base64Length(bytes)).toBeLessThan(SOLANA_TX_LIMIT_BYTES / 2)
+      expect(bytes * 2).toBeLessThan(SOLANA_TX_LIMIT_BYTES / 2)
     }
+  })
+})
+
+describe('кодування якоря в memo (§15)', () => {
+  const payload = encodeDecisionAnchor(anchor)
+
+  it('carries the payload as lowercase hex and nothing else', () => {
+    const memo = encodeAnchorMemo(payload)
+    expect(memo).toMatch(/^[0-9a-f]+$/)
+    expect(memo).toHaveLength(DECISION_ANCHOR_BYTES * 2)
+  })
+
+  it('survives the round trip that the chain will make it take', () => {
+    // Memo їде через UTF-8 всередині транзакції, тож перевіряємо саме той шлях,
+    // а не лише рядок: кодування, яке не переживає власний транспорт, гірше
+    // за відсутнє — воно виявиться після публікації.
+    const memo = encodeAnchorMemo(payload)
+    const asBytesOnChain = new TextEncoder().encode(memo)
+    const readBack = decodeAnchorMemo(new TextDecoder('utf-8', { fatal: true }).decode(asBytesOnChain))
+
+    expect(readBack).toEqual(payload)
+    expect(asBytesOnChain.byteLength).toBe(memo.length)
+  })
+
+  it('round-trips a rotation anchor too', () => {
+    expect(decodeAnchorMemo(encodeAnchorMemo(encodeKeyRotationAnchor(rotation)))).toEqual(
+      encodeKeyRotationAnchor(rotation),
+    )
+  })
+
+  it('ignores a memo that is not ours instead of failing on it', () => {
+    // За адресою агента лежать і чужі memo — тегувати транзакцію будь-якою
+    // адресою може будь-хто. Виняток тут обірвав би читання історії на
+    // першому сторонньому рядку.
+    const foreign = ['gm', 'ABCD', 'ab c', '', 'abc', `0x${toHex(payload)}`, 'ff'.repeat(200)]
+
+    for (const memo of foreign) {
+      expect(decodeAnchorMemo(memo)).toBeUndefined()
+    }
+  })
+
+  it('refuses to encode something that is not an anchor at all', () => {
+    expect(() => encodeAnchorMemo(new Uint8Array(0))).toThrow(/expected/)
+    expect(() => encodeAnchorMemo(new Uint8Array(ANCHOR_MEMO_MAX_BYTES + 1))).toThrow(/expected/)
   })
 })

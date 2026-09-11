@@ -3,6 +3,7 @@ import {
   ANCHOR_KIND,
   canonicalize,
   canonicalManifest,
+  encodeAnchorMemo,
   encodeDecisionAnchor,
   encodeKeyRotationAnchor,
   fromHex,
@@ -184,6 +185,14 @@ describe('MANIFEST-FORMAT.md §14.6–14.7 — якорі', () => {
     })
     expect(toHex(bytes)).toBe(DECISION_ANCHOR)
     expect(bytes.byteLength).toBe(154)
+  })
+
+  it('is exactly what the memo carries, as §11.1 claims', () => {
+    // Документ каже: «тестові вектори §14.6 і §14.7 — це і є вміст memo».
+    // Твердження, яке ніхто не перевіряє, реалізатор іншою мовою перевірить
+    // за нас — і дізнається, що воно неправда, вже на своєму клієнті.
+    expect(encodeAnchorMemo(fromHex(DECISION_ANCHOR))).toBe(DECISION_ANCHOR)
+    expect(encodeAnchorMemo(fromHex(ROTATION_ANCHOR))).toBe(ROTATION_ANCHOR)
   })
 
   it('encodes the key rotation anchor byte for byte', () => {
