@@ -34,7 +34,11 @@ describe('міграції', () => {
    * накочують без питань. Оновлювати цей рядок має бути свідомою дією.
    */
   it('are exactly the ones we know about, in order', () => {
-    expect(migrations).toEqual(['0000_init.sql', '0001_usage_daily.sql'])
+    expect(migrations).toEqual([
+      '0000_init.sql',
+      '0001_usage_daily.sql',
+      '0002_anchor_in_flight.sql',
+    ])
   })
 
   it('creates every table the schema declares', () => {

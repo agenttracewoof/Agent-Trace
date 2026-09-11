@@ -266,16 +266,20 @@ export const decisions = pgTable(
     hexCheck('decisions_signature_hex', table.signature, 64),
     check('decisions_decided_at_range', sql`${table.decidedAt} BETWEEN 0 AND 9007199254740991`),
     /**
-     * Заякорене рішення мусить нести всі три сліди ланцюга або жодного:
-     * половина заповнених колонок — це стан, у якому неможливо сказати,
-     * опублікували ми якір чи ні.
+     * Заякорене рішення мусить нести всі три сліди ланцюга. Підпис при цьому
+     * зʼявляється **раніше** за слот: publisher підписує транзакцію, зберігає
+     * її підпис і лише тоді відправляє. Без цього проміжного стану обрив між
+     * відправкою і підтвердженням лишав би рядок `pending` без жодного сліду,
+     * а наступний прохід слав би другий якір на те саме рішення — блокхеш
+     * живе ~60 с, тож повторна відправка дала б інший підпис, і шукати в
+     * ланцюгу було б нічого.
      */
     check(
       'decisions_anchor_shape',
       sql`
-        (${table.status} = 'anchored') = (${table.anchorSignature} IS NOT NULL)
-        AND (${table.anchorSignature} IS NULL) = (${table.anchorSlot} IS NULL)
-        AND (${table.anchorSignature} IS NULL) = (${table.anchoredAt} IS NULL)
+        (${table.status} = 'anchored') = (${table.anchorSlot} IS NOT NULL)
+        AND (${table.anchorSlot} IS NULL) = (${table.anchoredAt} IS NULL)
+        AND (${table.anchorSlot} IS NULL OR ${table.anchorSignature} IS NOT NULL)
       `,
     ),
     /** FR-028: місце звільняється лише після підтвердженого вивантаження. */

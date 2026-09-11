@@ -238,9 +238,25 @@ describe('CHECK-обмеження відхиляють те, заради чо�
     expect(code).toBe('23514')
   })
 
+  it('accepts a pending decision that already carries a sent signature', async () => {
+    // Проміжний стан publisher'а: транзакцію підписано і збережено її підпис,
+    // підтвердження ще немає. Без нього обрив після відправки дав би другий
+    // якір на те саме рішення.
+    await insertDecision('99999999-9999-4999-8999-99999999900a', { anchorSignature: 'sig' })
+
+    const rows = await db.query<{ status: string }>(`SELECT status FROM decisions WHERE id = $1`, [
+      '99999999-9999-4999-8999-99999999900a',
+    ])
+    expect(rows.rows[0]?.status).toBe('pending')
+  })
+
   it.each([
     ['anchored without a signature', { status: 'anchored' }],
     ['a signature without a slot', { anchorSignature: 'sig', status: 'anchored' }],
+    [
+      'anchored on a slot but without a signature',
+      { status: 'anchored', anchorSlot: 1, anchoredAt: new Date().toISOString() },
+    ],
     ['an archive time without a location', { archivedAt: new Date().toISOString() }],
   ])('refuses a decision that is %s', async (_name, extra) => {
     let code = 'accepted'
