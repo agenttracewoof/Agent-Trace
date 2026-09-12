@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -27,8 +27,20 @@ describe('verifier independence', () => {
     expect(deps.filter((name) => FORBIDDEN.includes(name))).toEqual([])
   })
 
-  it('carries no hardcoded AgentTrace endpoint', () => {
-    const source = readFileSync(fileURLToPath(new URL('./index.ts', import.meta.url)), 'utf8')
-    expect(source).not.toMatch(/agenttrace\.[a-z]+/i)
+  /**
+   * Сканується **весь** пакет, а не лише барель: адреса заводиться там, де є
+   * мережа, і найімовірніше місце для неї — CLI, у якому легко з'явитися прапорцю
+   * `--api https://…` з дефолтом. Тести виключені: у них адреси — фікстури.
+   */
+  it('carries no hardcoded AgentTrace endpoint anywhere in the package', () => {
+    const directory = fileURLToPath(new URL('.', import.meta.url))
+    const sources = readdirSync(directory).filter(
+      (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
+    )
+
+    expect(sources.length).toBeGreaterThan(1)
+    for (const name of sources) {
+      expect(readFileSync(`${directory}${name}`, 'utf8')).not.toMatch(/agenttrace\.[a-z]+/i)
+    }
   })
 })
