@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@agenttrace/shared": "workspace:*",
+    "@agenttrace/verify": "workspace:*",
+    "@solana/web3.js": "1.98.4",
     "@tanstack/react-query": "5.101.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",

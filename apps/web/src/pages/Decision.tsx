@@ -1,6 +1,7 @@
 import type { PublicDecisionResponse } from '@agenttrace/shared'
 import { useQuery } from '@tanstack/react-query'
 import { decisionQuery, type PublicApi } from '../api'
+import { VerificationState } from '../components/VerificationState'
 
 /**
  * Типи виводяться з контракту, а не імпортуються з `@agenttrace/manifest`:
@@ -189,6 +190,10 @@ export function DecisionPage({ api, decisionId }: { api: PublicApi; decisionId: 
   return (
     <div>
       <h1 className="font-semibold">Decision {decision.decisionId}</h1>
+
+      <section className="mt-4">
+        <VerificationState decision={decision} />
+      </section>
 
       {decision.signedManifest === null ? (
         <Notice

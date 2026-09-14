@@ -118,6 +118,12 @@ importers:
       '@agenttrace/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@agenttrace/verify':
+        specifier: workspace:*
+        version: link:../../packages/verify
+      '@solana/web3.js':
+        specifier: 1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
       '@tanstack/react-query':
         specifier: 5.101.4
         version: 5.101.4(react@19.2.8)
