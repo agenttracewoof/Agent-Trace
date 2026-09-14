@@ -7,6 +7,7 @@ import {
   type PublicApi,
   resolveApiBaseUrl,
 } from './api'
+import { DecisionPage } from './pages/Decision'
 
 /**
  * Каркас публічної сторінки (T033). Її незалежний тест зі спеки — «стороння
@@ -91,22 +92,17 @@ const NotFound = () => (
 )
 
 /**
- * Заглушка під T034/T035. Вона показує рівно дві речі — що адреса розібрана і
- * що маршрут існує, — і жодного разу не називає стан перевірки: стан має право
- * показувати лише той екран, який сам сходив у ланцюг.
+ * Форма адреси перевіряється до запиту: `decisionId` — це 32 hex, і формат
+ * публічний. Питати наш сервіс про завідомо неможливу адресу означало б
+ * показувати 400 як стан рішення.
  */
 function DecisionRoute({ api }: { api: PublicApi }) {
   const { decisionId } = useParams<{ decisionId: string }>()
   if (decisionId === undefined || !isDecisionId(decisionId)) return <NotFound />
 
-  void api
   return (
     <Shell>
-      <h1 className="font-semibold">Decision {decisionId}</h1>
-      <p className="mt-2 text-neutral-600">
-        The decision page lands here (T034), and the verification state it may show comes from the
-        chain, read in this browser (T035).
-      </p>
+      <DecisionPage api={api} decisionId={decisionId} />
     </Shell>
   )
 }
