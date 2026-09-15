@@ -126,6 +126,15 @@ async function verifiedNow(
 const PUBLISHER_TICK_MS = 2_000
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
 
+/**
+ * Як часто чекальник питає про своє рішення. Секунда, а не чверть: кожна спроба
+ * перевірки йде в ланцюг і **конкурує за той самий ліміт RPC**, що й publisher.
+ * На 250 мс десять паралельних чекальників вибивали з провайдера 429, і той
+ * відкладав виклики на 2 с — тобто стенд сам собі псував SC-001. Секунда робить
+ * замір грубішим і трохи гіршим для нас; це чесний бік похибки.
+ */
+const POLL_MS = 1_000
+
 export async function runScenario(deps: ScenarioDeps): Promise<ScenarioReport> {
   const fetchImpl = deps.fetch ?? ((url, init) => fetch(url, init))
   const log = deps.log ?? (() => {})
@@ -207,7 +216,7 @@ export async function runScenario(deps: ScenarioDeps): Promise<ScenarioReport> {
             }
           }
         }
-        await sleep(250)
+        await sleep(POLL_MS)
       }
       return {
         decisionId: one.decisionId,

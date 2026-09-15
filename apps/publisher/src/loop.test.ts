@@ -476,3 +476,106 @@ describe('publishPending', () => {
     expect(published).toBe(1)
   })
 })
+
+/**
+ * T071 — те, заради чого прохід став пакетним. Ці тести перевіряють не швидкість
+ * (її міряє наскрізний сценарій на живому кластері), а **кількість круговертей**:
+ * саме вона робила публікацію послідовною ціною ~1,4 с за рішення.
+ */
+describe('one pass, one round trip', () => {
+  const idOf = (index: number) =>
+    `44444444-4444-4444-8444-4444444444${index.toString().padStart(2, '0')}`
+
+  async function seedMany(count: number): Promise<void> {
+    for (let index = 0; index < count; index += 1) await seedDecision(idOf(index))
+  }
+
+  it('asks for one blockhash and one fee sample, however many decisions there are', async () => {
+    await seedMany(10)
+    let blockhashCalls = 0
+    let feeCalls = 0
+
+    const published = await publishPending(
+      db,
+      fakeChain({
+        getLatestBlockhash: async () => {
+          blockhashCalls += 1
+          return { blockhash: '11111111111111111111111111111111' }
+        },
+        getRecentPrioritizationFees: async () => {
+          feeCalls += 1
+          return [{ prioritizationFee: 0 }]
+        },
+      }),
+      config,
+    )
+
+    expect(published).toBe(10)
+    // Блокхеш живе ~60–90 с, а ціна в мережі одна на всіх: питати їх на кожне
+    // рішення означало б двадцять круговертей там, де досить двох.
+    expect(blockhashCalls).toBe(1)
+    expect(feeCalls).toBe(1)
+  })
+
+  it('confirms the whole batch in one status call per poll', async () => {
+    await seedMany(10)
+    const asked: number[] = []
+
+    const published = await publishPending(
+      db,
+      fakeChain({
+        getSignatureStatuses: async (signatures) => {
+          asked.push(signatures.length)
+          return {
+            value: signatures.map(() => ({
+              slot: 500,
+              confirmationStatus: 'confirmed',
+              err: null,
+            })),
+          }
+        },
+      }),
+      config,
+    )
+
+    expect(published).toBe(10)
+    // Один запит на всі десять підписів — метод бере до 256 за раз.
+    expect(asked).toEqual([10])
+  })
+
+  it('still isolates a failure inside the batch', async () => {
+    // Пакетність не має купуватися ціною «одне зіпсоване рішення топить прохід».
+    await seedMany(3)
+    let sends = 0
+
+    const published = await publishPending(
+      db,
+      fakeChain({
+        sendRawTransaction: async () => {
+          sends += 1
+          if (sends === 2) throw new Error('one bad send')
+          return 'sent'
+        },
+      }),
+      config,
+    )
+
+    expect(published).toBe(2)
+  })
+
+  it('defers the whole batch when the network price is above the ceiling', async () => {
+    await seedMany(4)
+
+    const published = await publishPending(
+      db,
+      fakeChain({ getRecentPrioritizationFees: async () => [{ prioritizationFee: 50_000 }] }),
+      config,
+    )
+
+    expect(published).toBe(0)
+    // Затор не є провиною рішення: спроби не ростуть, рядок лишається pending.
+    const row = await readDecision(idOf(0))
+    expect(row.status).toBe('pending')
+    expect(row.attempts).toBe(0)
+  })
+})

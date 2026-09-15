@@ -172,53 +172,94 @@ async function failAttempt(db: AnyPgDatabase, row: PendingRow): Promise<void> {
     .where(eq(decisions.id, row.id))
 }
 
-async function confirmSignature(
+/**
+ * Скільки відправок ідуть одночасно. Стеля існує не заради ланцюга — транзакції
+ * незалежні, послідовного nonce у Solana немає, — а заради RPC: пачка з двох
+ * сотень одночасних викликів упреться в ліміт провайдера і повернеться до нас
+ * помилками, які виглядатимуть як провина рішень.
+ */
+const SEND_CONCURRENCY = 8
+
+/** Скільки підписів `getSignatureStatuses` бере за раз — межа методу. */
+const STATUS_BATCH = 256
+
+async function statusesOf(
   chain: ChainClient,
-  signature: string,
-  sleep: (ms: number) => Promise<void>,
-): Promise<SignatureStatusLike | null> {
-  for (let poll = 0; poll < CONFIRM_POLLS; poll += 1) {
-    const [status] = (await chain.getSignatureStatuses([signature])).value
-    if (status != null && (confirmed(status) || status.err !== null)) return status
-    await sleep(CONFIRM_POLL_MS)
+  signatures: readonly string[],
+): Promise<Map<string, SignatureStatusLike | null>> {
+  const found = new Map<string, SignatureStatusLike | null>()
+
+  for (let start = 0; start < signatures.length; start += STATUS_BATCH) {
+    const chunk = signatures.slice(start, start + STATUS_BATCH)
+    const { value } = await chain.getSignatureStatuses([...chunk])
+    chunk.forEach((signature, index) => {
+      found.set(signature, value[index] ?? null)
+    })
   }
-  return null
+
+  return found
 }
 
-async function publishOne(
+/**
+ * Рядки, які вже несуть підпис із попереднього проходу. Статуси питаються
+ * **однією** відповіддю на всю пачку: метод бере до 256 підписів, і саме так
+ * `PLAN.md` рахував бюджет RPC. Запит на кожен рядок окремо давав би стільки ж
+ * круговертей, скільки рішень.
+ */
+async function resolveInFlight(
+  db: AnyPgDatabase,
+  chain: ChainClient,
+  rows: readonly PendingRow[],
+): Promise<{ readonly published: number; readonly resend: readonly PendingRow[] }> {
+  const carrying = rows.filter((row) => row.anchorSignature !== null)
+  if (carrying.length === 0) return { published: 0, resend: [] }
+
+  const statuses = await statusesOf(
+    chain,
+    carrying.map((row) => row.anchorSignature as string),
+  )
+
+  let published = 0
+  const resend: PendingRow[] = []
+
+  for (const row of carrying) {
+    const status = statuses.get(row.anchorSignature as string) ?? null
+
+    if (status != null && confirmed(status)) {
+      await markAnchored(db, row.id, row.anchorSignature as string, status.slot)
+      published += 1
+    } else if (status != null && status.err !== null) {
+      await failAttempt(db, row)
+    } else if (status != null) {
+      await defer(db, row.id, CONFIRM_POLL_MS)
+    } else {
+      // Підпису в ланцюгу немає, а вікно блокхешу вже минуло (рядок повернувся
+      // сюди не раніше, ніж через BLOCKHASH_EXPIRY_MS) — транзакція не долетить.
+      resend.push(row)
+    }
+  }
+
+  return { published, resend }
+}
+
+interface SentAnchor {
+  readonly row: PendingRow
+  readonly anchorSignature: string
+}
+
+/**
+ * Відправка. Блокхеш і комісії питаються **раз на прохід**, а не на рішення:
+ * блокхеш живе ~60–90 с, стеля комісії описує стан мережі, а не окремий запис,
+ * і саме ці два запити на кожне рішення й робили публікацію послідовною ціною
+ * ~1,4 с за штуку (замір T036).
+ */
+async function sendOne(
   db: AnyPgDatabase,
   chain: ChainClient,
   config: PublisherConfig,
   row: PendingRow,
-): Promise<boolean> {
-  const sleep = config.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)))
-
-  if (row.anchorSignature !== null) {
-    const [status] = (await chain.getSignatureStatuses([row.anchorSignature])).value
-
-    if (status != null && confirmed(status)) {
-      await markAnchored(db, row.id, row.anchorSignature, status.slot)
-      return true
-    }
-    if (status != null && status.err !== null) {
-      await failAttempt(db, row)
-      return false
-    }
-    if (status != null) {
-      await defer(db, row.id, CONFIRM_POLL_MS)
-      return false
-    }
-    // Підпису в ланцюгу немає, а вікно блокхешу вже минуло (рядок повернувся
-    // сюди не раніше, ніж через BLOCKHASH_EXPIRY_MS) — транзакція не долетить.
-  }
-
-  if (exceedsFeeCeiling(await chain.getRecentPrioritizationFees(), config.maxPriorityLamports)) {
-    // Затор — не провина рішення, тож лічильник спроб не росте: інакше рішення
-    // стало б `failed` за чужу ціну.
-    await defer(db, row.id, backoffMs(row.attempts + 1))
-    return false
-  }
-
+  blockhash: string,
+): Promise<SentAnchor | undefined> {
   try {
     const transaction = buildAnchorTransaction({
       payer: config.payer.publicKey,
@@ -232,39 +273,76 @@ async function publishOne(
         signature: row.signature,
       }),
       indexedBy: [row.agentPubkey],
-      recentBlockhash: (await chain.getLatestBlockhash()).blockhash,
+      recentBlockhash: blockhash,
     })
     transaction.sign(config.payer)
 
     const signature = transaction.signature
-    if (signature === null) throw new Error('publishOne: transaction stayed unsigned')
+    if (signature === null) throw new Error('sendOne: transaction stayed unsigned')
     const anchorSignature = toBase58(signature)
 
+    // Підпис лягає в базу **до** відправки: інакше обрив між `sendRawTransaction`
+    // і підтвердженням лишив би рядок без сліду, а наступний прохід поставив би
+    // другий якір на те саме рішення (R10).
     await db.update(decisions).set({ anchorSignature }).where(eq(decisions.id, row.id))
-
     await chain.sendRawTransaction(transaction.serialize())
 
-    const status = await confirmSignature(chain, anchorSignature, sleep)
-    if (status != null && confirmed(status)) {
-      await markAnchored(db, row.id, anchorSignature, status.slot)
-      return true
-    }
-    if (status != null) {
-      await failAttempt(db, { ...row, anchorSignature })
-      return false
-    }
-
-    await defer(db, row.id, BLOCKHASH_EXPIRY_MS)
-    return false
+    return { row, anchorSignature }
   } catch {
     await failAttempt(db, row)
-    return false
+    return undefined
   }
 }
 
 /**
- * Один прохід черги. Рішення беруться по одному й незалежно: падіння на одному
- * не має зупиняти решту — інакше єдиний зіпсований рядок тримав би всю чергу.
+ * Підтвердження всієї пачки одним опитуванням замість очікування кожного рішення
+ * по черзі. Раніше кожне рішення блокувало прохід у своєму `confirmSignature`
+ * до 15 с — десяте чекало дев'ятьох, і саме звідси бралися 18 с у SC-001.
+ */
+async function confirmBatch(
+  db: AnyPgDatabase,
+  chain: ChainClient,
+  sent: readonly SentAnchor[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<number> {
+  const waiting = new Map(sent.map((one) => [one.anchorSignature, one.row]))
+  let published = 0
+
+  for (let poll = 0; poll < CONFIRM_POLLS && waiting.size > 0; poll += 1) {
+    const statuses = await statusesOf(chain, [...waiting.keys()])
+
+    for (const [anchorSignature, row] of [...waiting]) {
+      const status = statuses.get(anchorSignature) ?? null
+      if (status == null) continue
+
+      if (confirmed(status)) {
+        await markAnchored(db, row.id, anchorSignature, status.slot)
+        published += 1
+        waiting.delete(anchorSignature)
+      } else if (status.err !== null) {
+        await failAttempt(db, { ...row, anchorSignature })
+        waiting.delete(anchorSignature)
+      }
+    }
+
+    if (waiting.size > 0) await sleep(CONFIRM_POLL_MS)
+  }
+
+  // Те, що не підтвердилося за відведені поли, не втрачене: підпис у базі, і
+  // наступний прохід почне саме з нього — після вікна блокхешу, не раніше.
+  for (const row of waiting.values()) await defer(db, row.id, BLOCKHASH_EXPIRY_MS)
+
+  return published
+}
+
+/**
+ * Один прохід черги. Рішення незалежні одне від одного: падіння на одному не
+ * зупиняє решту — інакше єдиний зіпсований рядок тримав би всю чергу.
+ *
+ * Прохід зроблений **пакетним** (T071): спільні блокхеш і комісії, паралельні
+ * відправки, одне опитування статусів на всіх. До цього кожне рішення робило
+ * два власні запити й чекало власного підтвердження, тож пачка з десяти йшла
+ * ~18 с при бюджеті SC-001 у 10 с — заміряно наскрізним сценарієм, а не оцінено.
  *
  * Блокувань немає навмисно: publisher — один процес (`PLAN.md` → чому окремий
  * сервіс), і `SELECT … FOR UPDATE` тут захищав би від конкурента, якого немає.
@@ -274,6 +352,8 @@ export async function publishPending(
   chain: ChainClient,
   config: PublisherConfig,
 ): Promise<number> {
+  const sleep = config.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)))
+
   const rows = await db
     .select({
       id: decisions.id,
@@ -290,10 +370,30 @@ export async function publishPending(
     .orderBy(asc(decisions.nextAttemptAt))
     .limit(config.batchSize)
 
-  let published = 0
-  for (const row of rows) {
-    if (await publishOne(db, chain, config, row)) published += 1
+  if (rows.length === 0) return 0
+
+  const inFlight = await resolveInFlight(db, chain, rows)
+  const toSend = [...rows.filter((row) => row.anchorSignature === null), ...inFlight.resend]
+  if (toSend.length === 0) return inFlight.published
+
+  if (exceedsFeeCeiling(await chain.getRecentPrioritizationFees(), config.maxPriorityLamports)) {
+    // Затор — не провина рішення, тож лічильник спроб не росте: інакше рішення
+    // стало б `failed` за чужу ціну. Відкладається вся пачка: ціна в мережі
+    // одна на всіх, і питати її для кожного рядка окремо нема сенсу.
+    for (const row of toSend) await defer(db, row.id, backoffMs(row.attempts + 1))
+    return inFlight.published
   }
 
-  return published
+  const { blockhash } = await chain.getLatestBlockhash()
+
+  const sent: SentAnchor[] = []
+  for (let start = 0; start < toSend.length; start += SEND_CONCURRENCY) {
+    const chunk = toSend.slice(start, start + SEND_CONCURRENCY)
+    const results = await Promise.all(
+      chunk.map((row) => sendOne(db, chain, config, row, blockhash)),
+    )
+    for (const one of results) if (one !== undefined) sent.push(one)
+  }
+
+  return inFlight.published + (await confirmBatch(db, chain, sent, sleep))
 }
