@@ -9,14 +9,24 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "demo": "tsx src/demo.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@agenttrace/manifest": "workspace:*",
-    "@agenttrace/sdk": "workspace:*"
+    "@agenttrace/sdk": "workspace:*",
+    "@agenttrace/verify": "workspace:*"
   },
   "devDependencies": {
+    "@agenttrace/api": "workspace:*",
+    "@agenttrace/db": "workspace:*",
+    "@agenttrace/publisher": "workspace:*",
+    "@electric-sql/pglite": "0.5.5",
+    "@hono/node-server": "2.1.0",
+    "@solana/web3.js": "1.98.4",
+    "drizzle-orm": "0.45.2",
+    "tsx": "4.23.12",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   }

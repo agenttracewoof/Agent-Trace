@@ -195,7 +195,34 @@ importers:
       '@agenttrace/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@agenttrace/verify':
+        specifier: workspace:*
+        version: link:../verify
     devDependencies:
+      '@agenttrace/api':
+        specifier: workspace:*
+        version: link:../../apps/api
+      '@agenttrace/db':
+        specifier: workspace:*
+        version: link:../db
+      '@agenttrace/publisher':
+        specifier: workspace:*
+        version: link:../../apps/publisher
+      '@electric-sql/pglite':
+        specifier: 0.5.5
+        version: 0.5.5
+      '@hono/node-server':
+        specifier: 2.1.0
+        version: 2.1.0(hono@4.13.2)
+      '@solana/web3.js':
+        specifier: 1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@electric-sql/pglite@0.5.5)(kysely@0.29.5)(postgres@3.4.9)
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
       typescript:
         specifier: 7.0.2
         version: 7.0.2

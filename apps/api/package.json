@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./harness": "./src/harness.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "seed:project": "tsx src/scripts/seed-project.ts",
