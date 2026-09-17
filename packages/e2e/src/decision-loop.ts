@@ -108,12 +108,24 @@ async function verifiedNow(
   agentPubkey: string,
 ): Promise<boolean> {
   const read = await publicRead(fetchImpl, deps.endpoint, decisionId)
-  const envelope = (read.body as { signedManifest?: unknown } | undefined)?.signedManifest
+  const body = read.body as
+    | { signedManifest?: unknown; anchor?: { transactionSignature?: string } | null }
+    | undefined
+  const envelope = body?.signedManifest
   if (envelope === null || envelope === undefined) return false
+
+  // Підказка про транзакцію (T072): одна круговерть замість обходу історії.
+  // Довіри вона не додає — транзакція за нею проходить ті самі перевірки.
+  const hint = body?.anchor?.transactionSignature
 
   const evidence = await collectEvidence(
     { chain: deps.chain, fetch: async () => new Response(JSON.stringify(envelope)) },
-    { agentPubkey, decisionId, manifestUrl: 'inline:envelope-from-public-read' },
+    {
+      agentPubkey,
+      decisionId,
+      manifestUrl: 'inline:envelope-from-public-read',
+      ...(hint === undefined ? {} : { anchorTransaction: hint }),
+    },
   )
   return (await verifyDecision(evidence)).status === 'verified'
 }

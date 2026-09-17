@@ -49,13 +49,32 @@ export const chainSource = (rpcUrl: string): ChainSource => new Connection(rpcUr
 
 export const anchorQuery = (
   rpcUrl: string,
-  request: { readonly agentPubkey: string; readonly decisionId: string },
+  request: {
+    readonly agentPubkey: string
+    readonly decisionId: string
+    /**
+     * Підпис транзакції з нашої ж відповіді — **підказка, не довіра** (T072).
+     * Вона економить обхід історії агента, але транзакція за нею проходить ті
+     * самі перевірки, тож підсунута або притримана підказка може зробити стан
+     * лише слабшим. Саме тому брати її в нас безпечно.
+     */
+    readonly anchorTransaction?: string | undefined
+  },
 ) => ({
-  queryKey: ['chain-anchor', rpcUrl, request.agentPubkey, request.decisionId] as const,
+  queryKey: [
+    'chain-anchor',
+    rpcUrl,
+    request.agentPubkey,
+    request.decisionId,
+    request.anchorTransaction ?? 'no-hint',
+  ] as const,
   queryFn: () =>
     anchorFromChain(chainSource(rpcUrl), {
       agentPubkey: request.agentPubkey,
       decisionId: request.decisionId,
+      ...(request.anchorTransaction === undefined
+        ? {}
+        : { anchorTransaction: request.anchorTransaction }),
       // Шар джерел приймає адресу конверта разом із запитом, але тут конверт уже
       // в руках: його віддав API разом із рішенням, і читати його вдруге нема
       // навіщо. Порожній рядок сюди не потрапляє — `anchorFromChain` його не чіпає.

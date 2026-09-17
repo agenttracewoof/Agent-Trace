@@ -51,6 +51,10 @@ required:
 
 options:
   --rpc <url>            solana rpc endpoint (default: $SOLANA_RPC_URL)
+  --anchor-tx <sig>      where to look first for the anchor. a hint, not trust:
+                         the transaction still has to name this agent and carry
+                         an anchor for this decision, so a wrong one only costs
+                         a walk through the history
   --limit <n>            how many transactions of the agent to walk (default 100)
   --json                 print the whole result as json on stdout
   --help                 print this
@@ -74,6 +78,7 @@ export interface CliRequest {
   readonly rpcUrl: string
   readonly json: boolean
   readonly limit?: number | undefined
+  readonly anchorTransaction?: string | undefined
 }
 
 type Parsed =
@@ -94,7 +99,7 @@ export interface CliOutcome {
   readonly stderr: string
 }
 
-const VALUE_OPTIONS = new Set(['agent', 'decision', 'manifest', 'rpc', 'limit'])
+const VALUE_OPTIONS = new Set(['agent', 'decision', 'manifest', 'rpc', 'limit', 'anchor-tx'])
 const HEX = (bytes: number) => new RegExp(`^[0-9a-f]{${bytes * 2}}$`)
 const usage = (message: string): Parsed => ({ kind: 'usage', message })
 
@@ -162,6 +167,9 @@ function parseArgs(argv: readonly string[], env: CliDeps['env']): Parsed {
       rpcUrl,
       json,
       ...(rawLimit === undefined ? {} : { limit: Number(rawLimit) }),
+      ...(values.get('anchor-tx') === undefined
+        ? {}
+        : { anchorTransaction: values.get('anchor-tx') }),
     },
   }
 }
@@ -307,6 +315,9 @@ export async function run(argv: readonly string[], deps: CliDeps): Promise<CliOu
         decisionId: request.decisionId,
         manifestUrl: request.manifestUrl,
         ...(request.limit === undefined ? {} : { limit: request.limit }),
+        ...(request.anchorTransaction === undefined
+          ? {}
+          : { anchorTransaction: request.anchorTransaction }),
       },
     )
     result = await verifyDecision(evidence)

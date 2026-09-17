@@ -8,6 +8,7 @@ import {
 import { Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import {
+  anchorFromChain,
   anchorPayloadsOf,
   type ChainSource,
   collectEvidence,
@@ -273,5 +274,143 @@ describe('collectEvidence', () => {
     await collectEvidence({ chain, fetch: serveEnvelope }, request)
 
     expect(asked).toBe(agent.publicKey.toBase58())
+  })
+})
+
+/**
+ * T072 — підказка про транзакцію якоря. Вона про **швидкість**, і головне тут
+ * не те, що вона працює, а те, що вона нічого не додає до довіри: два шляхи
+ * мусять давати той самий результат, інакше «швидкий» став би «поблажливим».
+ */
+describe('anchorTransaction as a hint', () => {
+  const request = {
+    agentPubkey: AGENT_PUBKEY,
+    decisionId: DECISION_ID,
+    manifestUrl: 'https://storage.example/1.json',
+  }
+
+  /**
+   * Ланцюг, у якому транзакція **не належить історії агента**: саме так виглядає
+   * чужий запис, на який може вказувати підказка. Історія порожня навмисно —
+   * інакше запасний шлях знайшов би те, що перевіряється тут як недосяжне.
+   */
+  function hintOnly(signature: string, transaction: TransactionLike): ChainSource {
+    return {
+      getSignaturesForAddress: async () => [],
+      getTransaction: async (asked) => (asked === signature ? transaction : null),
+    }
+  }
+
+  function countingChain(entries: Parameters<typeof chainWith>[0]) {
+    const asked = { history: 0, transactions: [] as string[] }
+    const inner = chainWith(entries)
+    const chain: ChainSource = {
+      getSignaturesForAddress: async (address, options) => {
+        asked.history += 1
+        return inner.getSignaturesForAddress(address, options)
+      },
+      getTransaction: async (signature, config) => {
+        asked.transactions.push(signature)
+        return inner.getTransaction(signature, config)
+      },
+    }
+    return { chain, asked }
+  }
+
+  it('finds the anchor without walking the history at all', async () => {
+    const { chain, asked } = countingChain([
+      {
+        signature: 'older',
+        transaction: transactionWith(encodeAnchorMemo(anchorBytes(OTHER_DECISION))),
+      },
+      {
+        signature: 'ours',
+        transaction: transactionWith(encodeAnchorMemo(anchorBytes(DECISION_ID))),
+      },
+    ])
+
+    const found = await anchorFromChain(chain, { ...request, anchorTransaction: 'ours' })
+
+    expect(found).toBeInstanceOf(Uint8Array)
+    expect(asked.history).toBe(0)
+    expect(asked.transactions).toEqual(['ours'])
+  })
+
+  it('falls back to the walk when the hint points at nothing', async () => {
+    const { chain, asked } = countingChain([
+      {
+        signature: 'ours',
+        transaction: transactionWith(encodeAnchorMemo(anchorBytes(DECISION_ID))),
+      },
+    ])
+
+    const found = await anchorFromChain(chain, { ...request, anchorTransaction: 'no-such-tx' })
+
+    // Підказка, яка не підтвердилася, коштує рівно однієї зайвої круговерті.
+    expect(found).toBeInstanceOf(Uint8Array)
+    expect(asked.history).toBe(1)
+  })
+
+  it('refuses a transaction that does not name the agent', async () => {
+    /**
+     * Найважливіший тест задачі. Memo з чужим вмістом може написати будь-хто,
+     * тож без цієї перевірки підказка приймала б запис, якого обхід історії
+     * агента ніколи не побачив би, — тобто розширювала б поняття якоря.
+     */
+    const stranger = Keypair.generate()
+    const foreign: TransactionLike = {
+      slot: 700,
+      meta: { err: null },
+      transaction: {
+        message: {
+          staticAccountKeys: [stranger.publicKey, MEMO_PROGRAM_ID],
+          compiledInstructions: [
+            {
+              programIdIndex: 1,
+              data: new TextEncoder().encode(encodeAnchorMemo(anchorBytes(DECISION_ID))),
+            },
+          ],
+        },
+      },
+    }
+    expect(
+      await anchorFromChain(hintOnly('foreign', foreign), {
+        ...request,
+        anchorTransaction: 'foreign',
+      }),
+    ).toBeUndefined()
+  })
+
+  it('refuses a transaction the chain rejected', async () => {
+    const failed: TransactionLike = {
+      ...transactionWith(encodeAnchorMemo(anchorBytes(DECISION_ID))),
+      meta: { err: { InstructionError: [0, {}] } },
+    }
+    expect(
+      await anchorFromChain(hintOnly('failed', failed), {
+        ...request,
+        anchorTransaction: 'failed',
+      }),
+    ).toBeUndefined()
+  })
+
+  it('refuses a hinted transaction that anchors a different decision', async () => {
+    const found = await anchorFromChain(
+      hintOnly('other', transactionWith(encodeAnchorMemo(anchorBytes(OTHER_DECISION)))),
+      { ...request, anchorTransaction: 'other' },
+    )
+
+    expect(found).toBeUndefined()
+  })
+
+  it('survives a hint the rpc endpoint throws on', async () => {
+    const chain: ChainSource = {
+      getSignaturesForAddress: async () => [],
+      getTransaction: async () => {
+        throw new Error('rpc said no')
+      },
+    }
+
+    expect(await anchorFromChain(chain, { ...request, anchorTransaction: 'boom' })).toBeUndefined()
   })
 })

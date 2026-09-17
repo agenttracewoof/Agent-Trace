@@ -84,6 +84,9 @@ function useVerification(decision: PublicDecisionResponse) {
     ...anchorQuery(rpcUrl ?? '', {
       agentPubkey: agentPubkey ?? '',
       decisionId: decision.decisionId,
+      ...(decision.anchor === null
+        ? {}
+        : { anchorTransaction: decision.anchor.transactionSignature }),
     }),
     enabled: rpcUrl !== undefined && agentPubkey !== undefined,
     staleTime: ANCHORED_STALE_MS,

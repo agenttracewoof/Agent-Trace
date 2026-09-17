@@ -109,14 +109,61 @@ export interface EvidenceRequest {
   /** Посилання на конверт у сховищі власника. Нашого API серед варіантів немає. */
   readonly manifestUrl: string
   readonly limit?: number
+  /**
+   * Підпис транзакції якоря — **підказка, а не довіра**. Вона економить обхід
+   * історії (одна круговерть замість однієї на кожну транзакцію агента), але не
+   * розширює того, що вважається якорем: транзакція за підказкою мусить пройти
+   * ті самі перевірки, що й знайдена обходом, включно з тим, що вона **називає
+   * адресу агента**. Тому підказка, яку підсунули або притримали, може зробити
+   * вердикт лише слабшим (`pending`), ніколи сильнішим — а звідки її взяли,
+   * значення не має.
+   */
+  readonly anchorTransaction?: string
 }
 
 const HISTORY_LIMIT = 100
+
+/**
+ * Якір усередині **однієї названої** транзакції. Перевірка адреси тут не зайва:
+ * memo з чужим вмістом може написати будь-хто, і без неї підказка приймала б
+ * запис, якого обхід історії агента ніколи не побачив би. Тобто два шляхи мають
+ * давати той самий результат, а не «швидкий» і «поблажливий».
+ */
+async function anchorInTransaction(
+  chain: ChainSource,
+  signature: string,
+  request: { readonly agentPubkey: string; readonly decisionId: string },
+): Promise<Uint8Array | undefined> {
+  let transaction: TransactionLike | null
+  try {
+    transaction = await chain.getTransaction(signature, { maxSupportedTransactionVersion: 0 })
+  } catch {
+    // Підказка, яка не читається, — не привід зупиняти перевірку: далі є обхід.
+    return undefined
+  }
+  if (transaction === null) return undefined
+  // Невдала транзакція нічого в ланцюг не записала, тож її memo якорем не є.
+  if (transaction.meta !== null && transaction.meta.err !== null) return undefined
+
+  const address = new PublicKey(fromHex(request.agentPubkey))
+  const namesAgent = transaction.transaction.message.staticAccountKeys.some((key) =>
+    key.equals(address),
+  )
+  if (!namesAgent) return undefined
+
+  return decisionAnchorIn(anchorPayloadsOf(transaction), request.decisionId)
+}
 
 export async function anchorFromChain(
   chain: ChainSource,
   request: EvidenceRequest,
 ): Promise<Uint8Array | undefined> {
+  if (request.anchorTransaction !== undefined) {
+    const hinted = await anchorInTransaction(chain, request.anchorTransaction, request)
+    if (hinted !== undefined) return hinted
+    // Підказка не підтвердилася — далі звичайним шляхом, ніби її не було.
+  }
+
   const address = new PublicKey(fromHex(request.agentPubkey))
   const history = await chain.getSignaturesForAddress(address, {
     limit: request.limit ?? HISTORY_LIMIT,
