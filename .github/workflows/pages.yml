@@ -54,9 +54,12 @@ jobs:
       - name: Serve deep links
         run: cp apps/web/dist/index.html apps/web/dist/404.html
 
+      # ⚠️ Перед першим успішним прогоном Pages треба **увімкнути руками**:
+      # Settings → Pages → Source: **GitHub Actions**. Створити сайт із workflow
+      # не вийде: `enablement: true` віддає `Resource not accessible by
+      # integration` — у `GITHUB_TOKEN` немає прав створювати Pages-сайт, це
+      # дія власника репозиторію. Після вмикання цей крок працює як є.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist
