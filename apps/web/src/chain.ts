@@ -1,4 +1,8 @@
 import { anchorFromChain, type ChainSource } from '@agenttrace/verify'
+
+// Реекспорт, щоб доступ до ланцюга в застосунку мав рівно одне місце входу.
+export { anchorFromChain }
+
 import { Connection } from '@solana/web3.js'
 
 /**

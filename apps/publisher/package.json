@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./loop": "./src/loop.ts"
+    "./loop": "./src/loop.ts",
+    "./memo": "./src/memo.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

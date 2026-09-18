@@ -1,0 +1,72 @@
+name: pages
+
+# Публікує **лише** сторінку самостійної перевірки конверта: їй не потрібні ані
+# наш API, ані база — тільки публічний вузол Solana. Повний хостинг (api,
+# publisher, дашборд) — це T060 і Railway/Vercel, а не Pages.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Один деплой за раз; черга не скасовує вже запущений, щоб сторінка не лишилась
+# наполовину оновленою.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the page
+        working-directory: apps/web
+        env:
+          # Проєктні Pages віддають сайт із підшляху репозиторію.
+          VITE_BASE_PATH: /Agent-Trace/
+          # Безключовий публічний вузол: змінна потрапляє у бандл, тож ключ тут
+          # став би публічним разом зі сторінкою (застосунок таке відхиляє).
+          VITE_SOLANA_RPC_URL: https://api.devnet.solana.com
+          # VITE_API_URL навмисно не задано: задеплоєного API ще немає (T060),
+          # і сторінка рішення чесно каже про це замість того, щоб мовчки
+          # показувати помилку мережі.
+        run: pnpm exec vite build
+
+      # У Pages немає rewrite'ів, тож глибоке посилання віддає 404. Копія
+      # index.html під цим імʼям і є прийнятий спосіб віддати SPA той самий
+      # документ: роутер розбере шлях уже в браузері.
+      - name: Serve deep links
+        run: cp apps/web/dist/index.html apps/web/dist/404.html
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

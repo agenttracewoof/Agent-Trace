@@ -1,0 +1,99 @@
+{
+  "manifest": {
+    "version": 1,
+    "agentPubkey": "8b2e1fc6174b74373b6caa8b8b8bceb57dba834b0ecb3c1a187760686667139d",
+    "decisionId": "efaf6ab8ac58cb01eac50ed549be3e0b",
+    "model": "claude-sonnet-5",
+    "sources": [
+      "https://quotes.example/raydium",
+      "https://risk.example/limits"
+    ],
+    "root": "1412c6c4a0885587c55b11da6601849a393624245daa7478372308792806cc72",
+    "decidedAt": 1786965849560,
+    "outcome": {
+      "action": "unwind",
+      "pair": "JTO/USDC",
+      "size": 35.35,
+      "reason": "spread above threshold"
+    },
+    "steps": [
+      {
+        "type": "source.read",
+        "private": false,
+        "input": {
+          "url": "https://quotes.example/lifinity/jto-usdc",
+          "pair": "JTO/USDC",
+          "venue": "lifinity"
+        },
+        "output": {
+          "price": 46.79,
+          "spread": 0.00385,
+          "stale": false
+        },
+        "inputHash": "362df3c43914a4b4d67b3d15e714c5868a3881f4c97ed8b0499fdfe37f1c6100",
+        "outputHash": "47e7d4e3bae638521c792ffddae2cbf8af7ba9d052679ff8c0cf996e7ed4af2e"
+      },
+      {
+        "type": "model.call",
+        "private": false,
+        "input": {
+          "url": "https://quotes.example/raydium/jup-usdc",
+          "pair": "JUP/USDC",
+          "venue": "raydium"
+        },
+        "output": {
+          "price": 97.12,
+          "spread": 0.00353,
+          "stale": false
+        },
+        "inputHash": "df9522b9c0cb840184dcd773b32cc3c1db2340fe3edc3805407e723fc8a95deb",
+        "outputHash": "2fb79dd8629f121f59807024eda00435246e8a5068388be34442ca5c9d7c5d3c"
+      },
+      {
+        "type": "model.call",
+        "private": true,
+        "inputHash": "0b0af4d7db5702a57a78e1195fd3e59a0b50e559a3e0c9eb11f193aa3c6093dd",
+        "outputHash": "5ff533a63053e35e13ff2d00c2012413bb6797e7f74eaed3789907ffbd1515b5"
+      },
+      {
+        "type": "policy.check",
+        "private": false,
+        "input": {
+          "url": "https://quotes.example/orca/jup-usdc",
+          "pair": "JUP/USDC",
+          "venue": "orca"
+        },
+        "output": {
+          "price": 43.32,
+          "spread": 0.00203,
+          "stale": false
+        },
+        "inputHash": "1db740a81ca22f722f3a277d9575770af13cc809d37f3fb64965b2ad862d2632",
+        "outputHash": "32eecc1db5e46a949675d7b28bed55c079d8f8b0e9f40e20759936eb0af81955"
+      },
+      {
+        "type": "tool.call",
+        "private": false,
+        "input": {
+          "url": "https://quotes.example/orca/sol-usdc",
+          "pair": "SOL/USDC",
+          "venue": "orca"
+        },
+        "output": {
+          "price": 134.3,
+          "spread": 0.00319,
+          "stale": false
+        },
+        "inputHash": "cf50534402bea3e1b6f3e422bcf269a23fd991797ebf91d789ef0a137b9f794c",
+        "outputHash": "edefb6cd7ffaf651f870d60456a7cd5919f2a59d05c2e249a3a703ba0d044d92"
+      },
+      {
+        "type": "policy.check",
+        "private": true,
+        "inputHash": "df9522b9c0cb840184dcd773b32cc3c1db2340fe3edc3805407e723fc8a95deb",
+        "outputHash": "2b35f325500492d5269ca2393941f4c63c15fae043607361590a1efa075fbb42"
+      }
+    ]
+  },
+  "signature": "147e0949996a39cfb90844c6eca9b10b0fcc4d02eba944535dc10ff8b9ea869ab062eccab5f39d3d7d641baadd8a7341cf024c7eeb90d7427857dbf981a1c209"
+}

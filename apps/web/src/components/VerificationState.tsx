@@ -115,15 +115,24 @@ function useVerification(decision: PublicDecisionResponse) {
   }
 }
 
-export function VerificationState({ decision }: { decision: PublicDecisionResponse }) {
-  const { verdict, chainProblem, rpcUrl, reading } = useVerification(decision)
-
-  if (verdict === undefined) {
-    return <div className="rounded bg-neutral-100 p-4">{reading ? 'Checking…' : 'Not checked'}</div>
-  }
-
-  const disagreement = apiDisagreement(decision, verdict)
-
+/**
+ * Показ самого вердикту, спільний для сторінки рішення і для сторінки
+ * самостійної перевірки (T073). Спільний навмисно: дві копії цього екрана
+ * колись розійшлися б у словах про той самий стан, і читач не мав би способу
+ * дізнатися, яка з них каже правду.
+ *
+ * `sources` — не примітка, а частина вердикту: рядок каже, звідки взято кожну
+ * половину доказів.
+ */
+export function VerdictCard({
+  verdict,
+  sources,
+  children,
+}: {
+  verdict: VerificationResult
+  sources: string
+  children?: React.ReactNode
+}) {
   return (
     <div className="rounded border border-neutral-200">
       <div className={`flex items-baseline gap-3 rounded-t p-4 ${TONE[verdict.status]}`}>
@@ -151,21 +160,35 @@ export function VerificationState({ decision }: { decision: PublicDecisionRespon
           </ul>
         ) : null}
 
-        {disagreement === undefined ? null : (
-          <p className="mt-3 rounded bg-red-50 p-2 text-red-900">{disagreement}</p>
-        )}
+        {children}
 
-        {/*
-          Звідки взято докази — частина вердикту, а не примітка. Читач має бачити,
-          що конверт приїхав від нас, а якір — ні: саме ця різниця й робить
-          перевірку незалежною від нашого слова.
-        */}
-        <p className="mt-3 text-xs text-neutral-500">
-          {chainProblem === undefined
-            ? `Anchor read from ${rpcUrl} by this browser. Envelope served by AgentTrace and checked here against its own signature.`
-            : `The chain was not read from this browser — ${chainProblem}. Without it no state stronger than "pending" is possible here; agenttrace-verify checks the chain from your own machine.`}
-        </p>
+        <p className="mt-3 text-xs text-neutral-500">{sources}</p>
       </div>
     </div>
+  )
+}
+
+export function VerificationState({ decision }: { decision: PublicDecisionResponse }) {
+  const { verdict, chainProblem, rpcUrl, reading } = useVerification(decision)
+
+  if (verdict === undefined) {
+    return <div className="rounded bg-neutral-100 p-4">{reading ? 'Checking…' : 'Not checked'}</div>
+  }
+
+  const disagreement = apiDisagreement(decision, verdict)
+
+  return (
+    <VerdictCard
+      verdict={verdict}
+      sources={
+        chainProblem === undefined
+          ? `Anchor read from ${rpcUrl} by this browser. Envelope served by AgentTrace and checked here against its own signature.`
+          : `The chain was not read from this browser — ${chainProblem}. Without it no state stronger than "pending" is possible here; agenttrace-verify checks the chain from your own machine.`
+      }
+    >
+      {disagreement === undefined ? null : (
+        <p className="mt-3 rounded bg-red-50 p-2 text-red-900">{disagreement}</p>
+      )}
+    </VerdictCard>
   )
 }

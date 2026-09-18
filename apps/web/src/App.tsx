@@ -8,6 +8,7 @@ import {
   resolveApiBaseUrl,
 } from './api'
 import { DecisionPage } from './pages/Decision'
+import { VerifyPage } from './pages/Verify'
 
 /**
  * Каркас публічної сторінки (T033). Її незалежний тест зі спеки — «стороння
@@ -15,10 +16,11 @@ import { DecisionPage } from './pages/Decision'
  * тож тут немає ані авторизації, ані стану користувача: адреса рішення — це
  * все, що потрібно.
  *
- * Сама сторінка рішення — T034, показ станів — T035. Тут заглушка, і вона
- * навмисно нічого не стверджує про цілісність: наш API ланцюг не читає, а
- * екран, який показує його `pending` як вердикт, привчав би читача вірити
- * нашому слову — рівно тому, від чого продукт відмовляється.
+ * Адреса API резолвиться **всередині маршруту рішення**, а не тут (T073).
+ * Раніше вона резолвилася в корені, і складання без `VITE_API_URL` давало
+ * екран «не налаштовано» **на весь застосунок** — включно зі сторінкою
+ * `/verify`, якій наш API не потрібен узагалі. Тобто одна змінна вимикала й те,
+ * що від неї не залежить.
  */
 
 const queryClient = new QueryClient({
@@ -35,23 +37,23 @@ const queryClient = new QueryClient({
   },
 })
 
-export function App() {
-  let api: PublicApi
-  try {
-    api = createPublicApi({ baseUrl: resolveApiBaseUrl(import.meta.env) })
-  } catch (cause) {
-    // Складання без адреси API дає биту сторінку, і сказати це треба прямо:
-    // порожній екран читається як «рішення не існує».
-    if (!(cause instanceof ApiNotConfigured)) throw cause
-    return <Fatal message={cause.message} />
-  }
+/**
+ * `base` у Vite задає підшлях, під яким віддається складання (на GitHub Pages
+ * це `/Agent-Trace/`). Роутер мусить знати той самий префікс, інакше глибокі
+ * посилання вестимуть у порожнечу.
+ */
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '')
 
+export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* `exactOptionalPropertyTypes` не дає передати `undefined` у необовʼязкове
+          поле, а корінь — це `'/'`, не «нічого». */}
+      <BrowserRouter basename={basename === '' ? '/' : basename}>
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/decisions/:decisionId" element={<DecisionRoute api={api} />} />
+          <Route path="/verify" element={<VerifyRoute />} />
+          <Route path="/decisions/:decisionId" element={<DecisionRoute />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
@@ -67,6 +69,12 @@ const Fatal = ({ message }: { message: string }) => (
   <Shell>
     <h1 className="font-semibold">This page is not configured</h1>
     <p className="mt-2 text-neutral-600">{message}</p>
+    <p className="mt-2 text-neutral-600">
+      <Link className="underline" to="/verify">
+        Checking an envelope against the chain
+      </Link>{' '}
+      needs no API and works here regardless.
+    </p>
   </Shell>
 )
 
@@ -76,6 +84,12 @@ const Landing = () => (
     <p className="mt-2 text-neutral-600">
       A decision is read at <code>/decisions/&lt;id&gt;</code>. No account is needed, and nothing
       here is taken on our word: the anchor is read from the chain.
+    </p>
+    <p className="mt-4 text-neutral-600">
+      <Link className="underline" to="/verify">
+        Verify an envelope yourself
+      </Link>{' '}
+      — that page talks to the chain only, never to us.
     </p>
   </Shell>
 )
@@ -96,8 +110,17 @@ const NotFound = () => (
  * публічний. Питати наш сервіс про завідомо неможливу адресу означало б
  * показувати 400 як стан рішення.
  */
-function DecisionRoute({ api }: { api: PublicApi }) {
+function DecisionRoute() {
   const { decisionId } = useParams<{ decisionId: string }>()
+
+  let api: PublicApi
+  try {
+    api = createPublicApi({ baseUrl: resolveApiBaseUrl(import.meta.env) })
+  } catch (cause) {
+    if (!(cause instanceof ApiNotConfigured)) throw cause
+    return <Fatal message={cause.message} />
+  }
+
   if (decisionId === undefined || !isDecisionId(decisionId)) return <NotFound />
 
   return (
@@ -106,3 +129,9 @@ function DecisionRoute({ api }: { api: PublicApi }) {
     </Shell>
   )
 }
+
+const VerifyRoute = () => (
+  <Shell>
+    <VerifyPage />
+  </Shell>
+)
