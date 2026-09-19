@@ -78,21 +78,55 @@ const Fatal = ({ message }: { message: string }) => (
   </Shell>
 )
 
-const Landing = () => (
-  <Shell>
-    <h1 className="font-semibold">AgentTrace</h1>
-    <p className="mt-2 text-neutral-600">
-      A decision is read at <code>/decisions/&lt;id&gt;</code>. No account is needed, and nothing
-      here is taken on our word: the anchor is read from the chain.
-    </p>
-    <p className="mt-4 text-neutral-600">
-      <Link className="underline" to="/verify">
-        Verify an envelope yourself
-      </Link>{' '}
-      — that page talks to the chain only, never to us.
-    </p>
-  </Shell>
-)
+/**
+ * Лендінг питає складання, а не автора: чи задана адреса API. Речення «сторінки
+ * рішення тут немає» протухло б того дня, коли зʼявиться хостинг (T060), а
+ * речення «рішення читається за посиланням» **уже** неправдиве там, де API не
+ * задеплоєний — і читається як зламана сторінка, хоч нічого не зламано.
+ */
+const Landing = () => {
+  let hasApi = true
+  try {
+    resolveApiBaseUrl(import.meta.env)
+  } catch {
+    hasApi = false
+  }
+
+  return (
+    <Shell>
+      <h1 className="font-semibold">AgentTrace</h1>
+      <p className="mt-2 text-neutral-600">
+        Cryptographic provenance for AI agent decisions: the agent signs what it decided, the root
+        of that record goes on Solana, and anyone can check the two against each other without
+        trusting us.
+      </p>
+
+      <p className="mt-4">
+        <Link className="underline" to="/verify">
+          Verify an envelope yourself
+        </Link>{' '}
+        <span className="text-neutral-600">
+          — that page reads the chain in your browser and never calls AgentTrace. A real example is
+          bundled with it.
+        </span>
+      </p>
+
+      <p className="mt-4 text-neutral-600">
+        {hasApi ? (
+          <>
+            A single decision is read at <code>/decisions/&lt;id&gt;</code>, no account needed.
+          </>
+        ) : (
+          <>
+            The per-decision page (<code>/decisions/&lt;id&gt;</code>) needs the AgentTrace API,
+            which is not part of this deployment yet — it arrives with hosting in v0.2.0. Nothing
+            above depends on it.
+          </>
+        )}
+      </p>
+    </Shell>
+  )
+}
 
 const NotFound = () => (
   <Shell>
