@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "seed:project": "tsx src/scripts/seed-project.ts",
-    "start": "node dist/index.js",
+    "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -17,6 +17,7 @@
   "dependencies": {
     "@agenttrace/db": "workspace:*",
     "@agenttrace/manifest": "workspace:*",
+    "@agenttrace/publisher": "workspace:*",
     "@agenttrace/shared": "workspace:*",
     "@agenttrace/verify": "workspace:*",
     "@hono/node-server": "2.1.0",

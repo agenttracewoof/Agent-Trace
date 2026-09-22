@@ -1,0 +1,72 @@
+# Один сервіс на весь бекенд — і це обмеження хостингу, а не задум.
+#
+# На безкоштовному плані Render існує **тільки** web-сервіс: background worker
+# коштує від $7/міс. Publisher же без процесу не існує, а без publisher'а
+# рішення лишаються `pending` назавжди. Тому він піднімається всередині
+# процесу API прапорцем `RUN_PUBLISHER` (`apps/api/src/index.ts`), а
+# двопроцесний запуск лишається дефолтом скрізь, де за worker'а платять.
+#
+# Ціна рішення, яку треба знати: API і publisher ділять 512 МБ і 0,1 CPU, і
+# падіння процесу зупиняє обидва. До M5 це демо на devnet, тож прийнятно.
+services:
+  - type: web
+    name: agenttrace-api
+    runtime: node
+    plan: free
+    # Найближчий регіон до бази: Supabase-проєкт стоїть у eu-west-2.
+    region: frankfurt
+
+    # НЕ `corepack enable`: на образі Node 26 він падає з `EROFS: unlink
+    # /usr/bin/pnpm` (образ має власний pnpm у read-only /usr/bin), а з Node 25
+    # corepack узагалі більше не постачають. Версія — та сама, що в
+    # `packageManager` кореневого package.json.
+    buildCommand: npx -y pnpm@9.15.0 install --frozen-lockfile
+
+    # Запуск через `tsx`, а не `node dist/index.js`, і це не лінь: бібліотечні
+    # пакети репозиторію нічого не емітять (правило `CLAUDE.md`), тож зібраний
+    # `apps/api/dist` імпортує `@agenttrace/db` → `packages/db/src/index.ts`,
+    # а той — `./schema/core.js`, якого на диску немає. Перевірено: `node
+    # dist/index.js` падає з `ERR_MODULE_NOT_FOUND` ще до першого рядка логів.
+    # `tsx` мапить `./x.js` на `./x.ts` і виконує джерела як є.
+    startCommand: ./apps/api/node_modules/.bin/tsx apps/api/src/index.ts
+
+    # ⚠️ Це проба **живості**, не готовності: `/health` поки відповідає лише за
+    # себе і зелений навіть при недоступній базі. Тобто зламаний деплой поїде
+    # з успішним статусом. Замінює цю неправду T061, додаючи відставання
+    # publisher'а; до того моменту на зелений `/health` покладатися не можна.
+    healthCheckPath: /health
+
+    envVars:
+      # Та сама версія, що локально. На 22 ламаються named-імпорти з
+      # CommonJS-пакетів, і падає це вже в рантаймі, не на збірці.
+      - key: NODE_VERSION
+        value: '26'
+
+      # Через це і зібралась уся конструкція: publisher живе тут.
+      - key: RUN_PUBLISHER
+        value: 'true'
+
+      # Supabase, transaction pooler :6543 — прямих підключень на free tier
+      # лише два, а `createDb` сам вимикає prepared statements за портом.
+      - key: DATABASE_URL
+        sync: false
+
+      # Ключ RPC — у query-рядку, тому лише секретом і лише серверу.
+      - key: SOLANA_RPC_URL
+        sync: false
+
+      # Гаманець-платник. Підписів манифестів не робить: його компрометація
+      # дає витратити SOL, але не підробити жодного рішення.
+      - key: PUBLISHER_SECRET_KEY
+        sync: false
+
+      - key: PUBLISHER_MAX_PRIORITY_LAMPORTS
+        value: '10000'
+
+      # Звідки складається публічне посилання у відповіді на рішення. Шлях
+      # обовʼязковий: проєктний сайт Pages живе під /Agent-Trace/.
+      - key: PUBLIC_APP_URL
+        value: https://agenttracewoof.github.io/Agent-Trace
+
+      - key: LOG_LEVEL
+        value: info

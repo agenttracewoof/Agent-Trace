@@ -32,6 +32,9 @@ importers:
       '@agenttrace/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
+      '@agenttrace/publisher':
+        specifier: workspace:*
+        version: link:../publisher
       '@agenttrace/shared':
         specifier: workspace:*
         version: link:../../packages/shared
