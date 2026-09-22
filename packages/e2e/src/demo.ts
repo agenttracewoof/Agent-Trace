@@ -102,6 +102,9 @@ const report = await runScenario({
   ingestKey,
   stateDir,
   count,
+  // PGlite тут щоразу порожній, тож зсув не потрібен; він потрібен прогону по
+  // справжній базі (T060), де ідентифікатори минулого прогону вже лежать.
+  seedBase: Number(process.env.E2E_SEED_BASE ?? 0),
   publishOnce: () =>
     publishPending(db, connection as unknown as ChainClient, {
       payer,

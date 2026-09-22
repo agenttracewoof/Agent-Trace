@@ -39,6 +39,15 @@ export interface ScenarioDeps {
   readonly stateDir: string
   /** Скільки рішень прогнати. p95 на 10 зразках — це найгірший із десяти. */
   readonly count: number
+  /**
+   * Зсув seed'а генератора. Потрібен, відколи база живе довше за прогін (T060):
+   * `decisionId` виводиться з seed, тож другий прогін із тим самим зсувом шле
+   * **ті самі ідентифікатори** з іншим вмістом, приймання законно відповідає
+   * 400, а чекальник далі знаходить у публічному читанні рішення **минулого**
+   * прогону — і міряє час по ньому. Детермінованість генератора при цьому
+   * лишається: зсув задає той, хто запускає.
+   */
+  readonly seedBase?: number
   /** Один прохід публікації; сценарій кличе його, доки черга не спорожніє. */
   readonly publishOnce: () => Promise<number>
   /** Джерело ланцюга для **перевірки** — те саме, що бере CLI. */
@@ -188,7 +197,7 @@ export async function runScenario(deps: ScenarioDeps): Promise<ScenarioReport> {
   const submitted: { decisionId: string; sdkMs: number; at: number }[] = []
   for (let index = 0; index < deps.count; index += 1) {
     const draft = generateDecision({
-      seed: index + 1,
+      seed: (deps.seedBase ?? 0) + index + 1,
       agentPubkey: client.agentPubkey,
       decidedAt: Date.now(),
     })
@@ -202,7 +211,16 @@ export async function runScenario(deps: ScenarioDeps): Promise<ScenarioReport> {
   }
 
   await client.flush()
-  log(`submitted ${submitted.length} decisions`)
+
+  /**
+   * Скільки приймання **відмовилося** взяти. Без цього рядка прогін по базі,
+   * яка вже містить ці ідентифікатори, виглядає як «submitted 10», хоча не
+   * прийнято жодного, — і далі звіт показує час, зміряний на чужих рішеннях.
+   */
+  const refused = await client.rejected()
+  log(
+    `submitted ${submitted.length} decisions${refused > 0 ? `, ${refused} refused by ingest` : ''}`,
+  )
 
   /**
    * Кожне рішення міряється **своїм** чекальником, паралельно: послідовний
