@@ -177,6 +177,9 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.5
         version: 0.5.5
+      '@types/node':
+        specifier: 26.2.0
+        version: 26.2.0
       drizzle-kit:
         specifier: 0.31.10
         version: 0.31.10
