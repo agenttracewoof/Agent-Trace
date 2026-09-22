@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HASH_BYTES, canonicalize, hashStep, hashValue } from './hash.js'
+import { canonicalize, HASH_BYTES, hashStep, hashValue } from './hash.js'
 
 const zeros = new Uint8Array(HASH_BYTES)
 const ones = new Uint8Array(HASH_BYTES).fill(1)

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { hashStep } from './hash.js'
 import {
-  type Manifest,
-  MANIFEST_VERSION,
   canonicalManifest,
   fromHex,
+  MANIFEST_VERSION,
+  type Manifest,
   manifestDigest,
   parseManifest,
   stepsRoot,

@@ -15,4 +15,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo run lint typecheck test build
+      # Лінт кличеться напряму, а не через `turbo run lint`. Turbo, не знайшовши
+      # задачі ні в одному пакеті, виходить з нулем — саме так цей крок і був
+      # зеленим, не перевіряючи нічого. Biome ж читає репозиторій цілком, тож
+      # новий пакет накривається тим самим викликом і пропустити його не можна.
+      - run: pnpm lint
+      - run: pnpm turbo run typecheck test build

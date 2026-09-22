@@ -3,10 +3,10 @@ import {
   ANCHOR_KIND,
   ANCHOR_MEMO_MAX_BYTES,
   anchorKindOf,
-  decodeAnchorMemo,
   DECISION_ANCHOR_BYTES,
   DECISION_ANCHOR_LAYOUT,
   type DecisionAnchor,
+  decodeAnchorMemo,
   decodeDecisionAnchor,
   decodeKeyRotationAnchor,
   encodeAnchorMemo,
@@ -225,7 +225,9 @@ describe('кодування якоря в memo (§15)', () => {
     // за відсутнє — воно виявиться після публікації.
     const memo = encodeAnchorMemo(payload)
     const asBytesOnChain = new TextEncoder().encode(memo)
-    const readBack = decodeAnchorMemo(new TextDecoder('utf-8', { fatal: true }).decode(asBytesOnChain))
+    const readBack = decodeAnchorMemo(
+      new TextDecoder('utf-8', { fatal: true }).decode(asBytesOnChain),
+    )
 
     expect(readBack).toEqual(payload)
     expect(asBytesOnChain.byteLength).toBe(memo.length)

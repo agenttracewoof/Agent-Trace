@@ -4,10 +4,7 @@
     "agentPubkey": "8b2e1fc6174b74373b6caa8b8b8bceb57dba834b0ecb3c1a187760686667139d",
     "decisionId": "efaf6ab8ac58cb01eac50ed549be3e0b",
     "model": "claude-sonnet-5",
-    "sources": [
-      "https://quotes.example/raydium",
-      "https://risk.example/limits"
-    ],
+    "sources": ["https://quotes.example/raydium", "https://risk.example/limits"],
     "root": "1412c6c4a0885587c55b11da6601849a393624245daa7478372308792806cc72",
     "decidedAt": 1786965849560,
     "outcome": {

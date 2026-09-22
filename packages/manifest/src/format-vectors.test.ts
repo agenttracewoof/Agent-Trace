@@ -62,11 +62,29 @@ const CANONICAL_MANIFEST =
   `{"inputHash":"${INPUT_HASH_1}","outputHash":"${OUTPUT_HASH_1}","private":true,` +
   '"type":"model.call"}],"version":1}'
 
-const DECISION_ANCHOR =
-  '0100' + AGENT_PUBKEY + ROOT + '0123456789abcdeffedcba9876543210' + '00000199c82cc000' + SIGNATURE
+/**
+ * Поле на рядок — рівно так вектор надрукований у документі (§14.6, §14.7), і
+ * рівно так його видно тут. Конкатенація через `+` читалась так само, але
+ * змішувала літерали зі змінними, а зведення такого виразу в один шаблонний
+ * рядок склеює сусідні поля, і межа між ними зникає.
+ */
+const DECISION_ANCHOR = [
+  '0100',
+  AGENT_PUBKEY,
+  ROOT,
+  '0123456789abcdeffedcba9876543210',
+  '00000199c82cc000',
+  SIGNATURE,
+].join('')
 
-const ROTATION_ANCHOR =
-  '0101' + 'aa'.repeat(32) + AGENT_PUBKEY + '00' + '00000199c82cc000' + SIGNATURE
+const ROTATION_ANCHOR = [
+  '0101',
+  'aa'.repeat(32),
+  AGENT_PUBKEY,
+  '00',
+  '00000199c82cc000',
+  SIGNATURE,
+].join('')
 
 const steps: Manifest['steps'] = [
   {
