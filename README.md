@@ -6,6 +6,21 @@ which model, which intermediate steps — and anchors its root on Solana. Anyone
 the link can verify that the record has not changed, without trusting AgentTrace and
 without the model, the prompts or the API keys ever being exposed.
 
+## Live
+
+| | |
+|---|---|
+| Demo page | https://agenttracewoof.github.io/Agent-Trace/ |
+| API | https://agenttrace-api-cr1b.onrender.com |
+
+The page at `/verify` checks an envelope against the chain **in your browser**, with
+no backend of ours in the path — a public Solana node is the only thing it needs.
+The decision page does read our API, and says so when it cannot.
+
+Everything runs on devnet until milestone M5, and devnet is reset periodically: no
+anchor there is meant to outlive a demo. The API runs on a free instance that spins
+down when idle, so the first request after a quiet spell can take up to a minute.
+
 ## What it is not
 
 It does not run agents, hold funds, or judge whether a decision was *good*. It proves
