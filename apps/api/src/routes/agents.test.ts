@@ -210,3 +210,30 @@ describe('невідомий ingest-ключ', () => {
     expect(await rows('SELECT id FROM agents')).toEqual([])
   })
 })
+
+describe('ключ, яким підписати неможливо', () => {
+  // `dd…dd` і `02…02` — хекс правильної довжини, який точкою ed25519 не є.
+  // Схема їх пропускає (алфавіт і довжина в порядку), тож без перевірки на
+  // кривій вони дійшли б до бази, а впали б аж у publisher'і.
+  const OFF_CURVE = ['dd'.repeat(32), '02'.repeat(32)]
+
+  it.each(OFF_CURVE)('refuses %s, which is not a point on the curve', async (publicKey) => {
+    const response = await register(keyOfFirst, agentBody({ publicKey }))
+    const json = (await response.json()) as ErrorBody
+
+    expect(response.status).toBe(400)
+    expect(json.error.code).toBe('INVALID_INPUT')
+    expect(await rows('SELECT id FROM agents')).toEqual([])
+    expect(await rows('SELECT id FROM agent_keys')).toEqual([])
+  })
+
+  it('keeps taking the keys an SDK actually generates', async () => {
+    // Сторож проти перевірки, яка відхиляє все: ключ від `crypto.subtle`
+    // проходить, і саме такі ключі шле SDK.
+    const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
+    const publicKey = [...raw].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+
+    expect((await register(keyOfFirst, agentBody({ publicKey }))).status).toBe(200)
+  })
+})

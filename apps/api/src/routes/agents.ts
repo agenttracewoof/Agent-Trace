@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { and, eq } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
+import { assertAgentPubkeyUsable } from '../agent-pubkey.js'
 import type { Variables } from '../app.js'
 import { AppError } from '../errors.js'
 import { ingestAuth, projectByIngestKeyHash } from '../middleware/auth.js'
@@ -69,6 +70,10 @@ async function registerAgent<
   projectId: string,
   request: RegisterAgentRequest,
 ): Promise<string> {
+  // Перед будь-яким запитом до бази: ключ, яким не можна підписати, не варто
+  // ані шукати, ані записувати.
+  assertAgentPubkeyUsable(request.publicKey)
+
   const holder = await agentHoldingKey(db, request.publicKey)
   if (holder !== undefined) {
     if (holder.projectId !== projectId || holder.externalId !== request.externalId) {
