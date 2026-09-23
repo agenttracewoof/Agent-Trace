@@ -8,6 +8,11 @@ name: keepalive
 # `*/5`, а не `*/10`: розклад GitHub запізнюється на хвилини, і десятихвилинний
 # інтервал з таким дрейфом у поріг 15 хвилин уже не вкладається.
 #
+# Після T061 це не тільки будильник. `/health` тепер ходить у базу, дивиться на
+# чергу, на цикл публікації і на тіп ланцюга, тож пінг **перевіряє** стан, а не
+# лише будить процес: workflow червоніє на всьому, що не `ok`, і власник дізнається
+# про відставання з пошти, а не з відкритої сторінки.
+#
 # ⚠️ GitHub вимикає розклад після 60 днів без комітів у репозиторій. Увімкнути
 # назад можна лише руками, у вкладці Actions.
 on:
@@ -29,12 +34,34 @@ jobs:
     steps:
       # Холодний старт Render — близько хвилини, тож таймаут curl має бути
       # більшим за нього: інакше пінг падатиме саме тоді, коли він потрібен.
-      # Друкуємо початок відповіді, а не всю: у тілі `/health` зайвого немає
-      # сьогодні, але воно росте на T061.
-      - name: Wake the API
+      #
+      # `--fail-with-body`, а не `-f`: на 503 тіло і є діагнозом, і саме його
+      # треба надрукувати, перш ніж падати. Весь звіт друкується цілком — він
+      # маленький і не містить нічого, чого немає у відкритій відповіді.
+      - name: Ping the API and read what it answered
         run: |
           if [ -z "${{ vars.VITE_API_URL }}" ]; then
-            echo "VITE_API_URL is not set — nothing to ping yet (T060 in progress)."
+            echo "VITE_API_URL is not set — nothing to ping yet."
             exit 0
           fi
-          curl -sSf --max-time 120 "${{ vars.VITE_API_URL }}/health" | cut -c1-120
+
+          body=$(curl -sS --fail-with-body --max-time 120 "${{ vars.VITE_API_URL }}/health") || {
+            echo "$body"
+            echo "::error::/health answered with a failing status — the API is not ready."
+            exit 1
+          }
+          echo "$body"
+
+          # Розбір без jq. `grep -o` + `head -n1`, а не `sed` по всьому тілу:
+          # у відповіді є ще по одному `"status"` на кожну перевірку, а `.*` у
+          # sed жадібний — він узяв би останній, тобто статус ланцюга замість
+          # загального. Порожній результат теж валить крок: не розібрали —
+          # значить не перевірили.
+          status=$(printf '%s' "$body" \
+            | grep -o '"status"[[:space:]]*:[[:space:]]*"[a-z]*"' \
+            | head -n1 \
+            | sed 's/.*"\([a-z]*\)"$/\1/')
+          if [ "$status" != "ok" ]; then
+            echo "::error::/health is $status — see the checks above (queue, publisher, chain)."
+            exit 1
+          fi

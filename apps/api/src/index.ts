@@ -7,6 +7,7 @@ import {
 } from '@agenttrace/publisher/run'
 import { serve } from '@hono/node-server'
 import { createApp } from './app.js'
+import { createHealthReporter } from './health.js'
 import { createLogger } from './logger.js'
 import { agentRoutes } from './routes/agents.js'
 import { decisionRoutes } from './routes/decisions.js'
@@ -31,35 +32,27 @@ function required(name: string): string {
 const db = createDb(required('DATABASE_URL'))
 
 /**
- * Окремого CORS тут немає навмисно. Єдине, куди ходить браузер, — `/v1/public/*`,
- * і той відкритий усім у самому маршруті: публічне посилання має читатися
- * з чужої сторінки без нашої участі (FR-012, SC-009). Решта маршрутів ходить
- * із ingest-ключем із серверного процесу, якому CORS не заважає й не помагає.
- * Перший справжній випадок — дашборд за сесією (Фаза 3), і origin туди
- * прийде тоді ж, коли й сам дашборд.
- */
-const app = createApp({ logger })
-app.route('/v1', agentRoutes(db))
-app.route('/v1', decisionRoutes(db, { publicAppUrl: required('PUBLIC_APP_URL') }))
-// Без `ingestAuth` навмисно: посилання на рішення відкривається без ключа (FR-012).
-app.route('/v1', publicRoutes(db))
-
-/**
  * Publisher усередині цього процесу — поступка хостингу, не зміна задуму
  * (`PLAN.md` → чому окремий сервіс). На безкоштовному плані Render існує лише
  * web-сервіс; background worker коштує грошей, а без publisher'а рішення
  * лишаються `pending` назавжди, тобто продукт не працює взагалі. Прапорець
  * лишає двопроцесний запуск дефолтом: локально й там, де за worker'а платять,
  * `apps/publisher` піднімається сам і `RUN_PUBLISHER` не ставиться.
+ *
+ * Піднімається **до** відкриття порту: конфігурація publisher'а — причина
+ * впасти, а процес, який уже прийняв запит і аж тоді вирішив вийти, встиг
+ * пообіцяти якір, якого не буде.
  */
 let publisher: RunningPublisher | undefined
+let chain: ReturnType<typeof chainFromEnv> | undefined
 
 if (process.env.RUN_PUBLISHER === 'true') {
   try {
     const config = publisherConfigFromEnv(process.env)
+    chain = chainFromEnv(process.env)
     publisher = startPublisher({
       db,
-      chain: chainFromEnv(process.env),
+      chain,
       config,
       logger: logger.child({ service: 'publisher' }),
     })
@@ -71,6 +64,35 @@ if (process.env.RUN_PUBLISHER === 'true') {
     process.exit(1)
   }
 }
+
+/** `const`, щоб звузити тип усередині замикання: `let chain` там знову `undefined`. */
+const rpc = chain
+
+/**
+ * Окремого CORS тут немає навмисно. Єдине, куди ходить браузер, — `/v1/public/*`,
+ * і той відкритий усім у самому маршруті: публічне посилання має читатися
+ * з чужої сторінки без нашої участі (FR-012, SC-009). Решта маршрутів ходить
+ * із ingest-ключем із серверного процесу, якому CORS не заважає й не помагає.
+ * Перший справжній випадок — дашборд за сесією (Фаза 3), і origin туди
+ * прийде тоді ж, коли й сам дашборд.
+ */
+const app = createApp({
+  logger,
+  /**
+   * Тіп ланцюга питаємо лише там, де вже є клієнт RPC: заводити друге
+   * зʼєднання заради `/health` означало б, що ендпоінт міряє не те, чим
+   * publisher користується насправді.
+   */
+  health: createHealthReporter({
+    db,
+    chainTip: rpc === undefined ? null : () => rpc.getSlot(),
+    publisher: () => publisher?.snapshot() ?? null,
+  }),
+})
+app.route('/v1', agentRoutes(db))
+app.route('/v1', decisionRoutes(db, { publicAppUrl: required('PUBLIC_APP_URL') }))
+// Без `ingestAuth` навмисно: посилання на рішення відкривається без ключа (FR-012).
+app.route('/v1', publicRoutes(db))
 
 /**
  * `PORT` віддає Render, `API_PORT` — наш `.env`. Наше значення сильніше, бо

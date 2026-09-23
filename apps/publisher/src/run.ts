@@ -30,17 +30,71 @@ export interface StartPublisherOptions {
   readonly tickMs?: number
 }
 
+/**
+ * Те, що цикл розповідає про себе назовні — і рівно стільки.
+ *
+ * Тексту останньої помилки тут немає **навмисно**: єдиний споживач знімка —
+ * публічний `/health` без ключа, а помилка драйвера бази найчастіше несе рядок
+ * підключення разом із паролем. Те, що сталося, лишається в логах; назовні
+ * їдуть лічильники, за якими видно, що саме зараз погано.
+ */
+export interface PublisherSnapshot {
+  /** `false` після `stop()`: цикл більше не почне проходу. */
+  readonly running: boolean
+  readonly passes: number
+  /** Коли закінчився останній прохід — байдуже, вдалий чи ні. */
+  readonly lastPassEndedAt: number | null
+  readonly lastOkAt: number | null
+  readonly lastFailureAt: number | null
+  readonly consecutiveFailures: number
+  /** Поточна пауза між проходами: вона росте відступом. */
+  readonly sleepMs: number
+}
+
 export interface RunningPublisher {
   /** Повертається, коли поточний прохід завершився, а наступний уже не почнеться. */
   stop(): Promise<void>
+  /** Стан циклу на цю мить. Читається з `/health` (T061). */
+  snapshot(): PublisherSnapshot
 }
 
 export const DEFAULT_TICK_MS = 2_000
+
+/**
+ * Стеля відступу — та сама, що в `backoffMs` для окремого рішення: довша пауза
+ * перетворила б хвилинний збій провайдера на півгодини мовчання.
+ */
+export const MAX_PASS_BACKOFF_MS = 5 * 60_000
+
+/**
+ * Пауза після **серії** невдалих проходів.
+ *
+ * Без неї тік у дві секунди перетворює помилку конфігурації на блокування від
+ * провайдера: на першому деплої в `DATABASE_URL` стояв неправильний пароль, і
+ * цикл за хвилини набив стільки невдалих автентифікацій, що Supabase увімкнув
+ * `ECIRCUITBREAKER` — після чого правильний пароль теж якийсь час не проходив,
+ * і діагностика почала показувати не ту причину, що є.
+ *
+ * Свідомий бік того ж рішення лишився: перша ж вдала спроба скидає лічильник,
+ * тож хвилина недоступної бази не коштує зупинки публікації. Дрижання немає —
+ * процес рівно один, і розводити в часі тут нікого.
+ */
+export function passBackoffMs(tickMs: number, consecutiveFailures: number): number {
+  if (consecutiveFailures <= 0) return tickMs
+  return Math.min(tickMs * 2 ** consecutiveFailures, MAX_PASS_BACKOFF_MS)
+}
 
 export function startPublisher(options: StartPublisherOptions): RunningPublisher {
   const tickMs = options.tickMs ?? DEFAULT_TICK_MS
   let running = true
   let wake: (() => void) | undefined
+
+  let passes = 0
+  let lastPassEndedAt: number | null = null
+  let lastOkAt: number | null = null
+  let lastFailureAt: number | null = null
+  let consecutiveFailures = 0
+  let sleepMs = tickMs
 
   /**
    * Сон переривний: без цього `stop()` чекав би до двох секунд ні на чому, і
@@ -60,14 +114,31 @@ export function startPublisher(options: StartPublisherOptions): RunningPublisher
       try {
         const published = await publishPending(options.db, options.chain, options.config)
         if (published > 0) options.logger.info({ published }, 'anchored')
+        consecutiveFailures = 0
+        lastOkAt = Date.now()
       } catch (error) {
         // Прохід може впасти лише на спільному ресурсі (база, RPC) — окреме
         // рішення падає всередині. Зупиняти цикл через це означало б, що
-        // хвилина недоступної бази коштує зупинки публікації назавжди.
-        options.logger.error({ err: error }, 'publish pass failed')
+        // хвилина недоступної бази коштує зупинки публікації назавжди; а от
+        // ходити туди кожні дві секунди — це те, за що нас уже блокували.
+        consecutiveFailures += 1
+        lastFailureAt = Date.now()
+        options.logger.error(
+          {
+            err: error,
+            consecutiveFailures,
+            nextPassInMs: passBackoffMs(tickMs, consecutiveFailures),
+          },
+          'publish pass failed',
+        )
       }
+
+      passes += 1
+      lastPassEndedAt = Date.now()
+
       if (!running) break
-      await sleep(tickMs)
+      sleepMs = passBackoffMs(tickMs, consecutiveFailures)
+      await sleep(sleepMs)
     }
   })()
 
@@ -77,6 +148,15 @@ export function startPublisher(options: StartPublisherOptions): RunningPublisher
       wake?.()
       await finished
     },
+    snapshot: () => ({
+      running,
+      passes,
+      lastPassEndedAt,
+      lastOkAt,
+      lastFailureAt,
+      consecutiveFailures,
+      sleepMs,
+    }),
   }
 }
 

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { ZodError } from 'zod'
 import { AppError, ERROR_STATUS, type ErrorCode, errorBody } from './errors.js'
+import type { HealthReporter } from './health.js'
 import { createLogger, type Logger } from './logger.js'
 import type { ProjectContext } from './middleware/auth.js'
 
@@ -20,6 +21,12 @@ export interface Variables {
 
 export interface AppOptions {
   readonly logger?: Logger
+  /**
+   * Перевірки для `/health` (T061). Без них ендпоінт відповідає лише за себе —
+   * і каже про це порожнім `checks`, а не мовчазним «ok». Сам застосунок бази
+   * не тримає: її має `index.ts`, а тести каркаса піднімають його без неї.
+   */
+  readonly health?: HealthReporter
 }
 
 /** Статуси, які Hono кидає сам, у наші коди. Усе інше — `INTERNAL`. */
@@ -60,20 +67,34 @@ export function createApp(options: AppOptions = {}) {
   })
 
   /**
-   * Поки що відповідає лише за себе: живий процес і нічого більше. **Це не
-   * готовність до роботи** — база тут не перевіряється, тож зелений `/health`
-   * при недоступній базі цілком можливий. Саме цю неправду замінює T061,
-   * додаючи відставання publisher'а від тіпа ланцюга; до того моменту не
-   * варто вішати на цей ендпоінт healthcheck деплою.
+   * Готовність, а не живість (T061). Подробиці того, що саме перевіряється і
+   * чому 503 віддається лише на базі, — у `health.ts`.
+   *
+   * Без `options.health` поведінка та сама, що була до T061: порожній `checks`
+   * і жодної обіцянки. Це режим тестів каркаса — процес, який слухає порт,
+   * завжди отримує перевірки від `index.ts`.
    */
-  app.get('/health', (c) =>
-    c.json({
-      status: 'ok',
-      service: 'api',
-      uptimeSeconds: Math.round(process.uptime()),
-      checks: {},
-    }),
-  )
+  app.get('/health', async (c) => {
+    const uptimeSeconds = Math.round(process.uptime())
+
+    if (options.health === undefined) {
+      return c.json({ status: 'ok', service: 'api', uptimeSeconds, checks: {} })
+    }
+
+    const report = await options.health()
+    return c.json(
+      {
+        status: report.status,
+        service: 'api',
+        uptimeSeconds,
+        ageSeconds: report.ageSeconds,
+        checks: report.checks,
+      },
+      // 503 адресоване хостингу: «цей деплой не готовий». Усе, чого перезапуск
+      // не лікує, лишається двохсотим із `status: "degraded"` у тілі.
+      report.status === 'fail' ? 503 : 200,
+    )
+  })
 
   app.notFound((c) =>
     c.json(errorBody('NOT_FOUND', 'Resource not found', { requestId: c.get('requestId') }), 404),

@@ -8,6 +8,8 @@ import { type ChainClient, type PublisherConfig, toBase58 } from './loop.js'
 import {
   chainFromEnv,
   fromBase58,
+  MAX_PASS_BACKOFF_MS,
+  passBackoffMs,
   publisherConfigFromEnv,
   requiredEnv,
   startPublisher,
@@ -238,5 +240,128 @@ describe('оточення читається одним місцем', () => {
     expect(() => requiredEnv({ DATABASE_URL: '' }, 'DATABASE_URL')).toThrow(/DATABASE_URL/)
     expect(() => chainFromEnv({})).toThrow(/SOLANA_RPC_URL/)
     expect(() => publisherConfigFromEnv({ PUBLISHER_SECRET_KEY: 'not base58 at all!' })).toThrow()
+  })
+})
+
+describe('відступ після серії невдалих проходів', () => {
+  it('keeps the plain tick while passes succeed', () => {
+    expect(passBackoffMs(2_000, 0)).toBe(2_000)
+  })
+
+  it('doubles per consecutive failure and stops at the ceiling', () => {
+    expect(passBackoffMs(2_000, 1)).toBe(4_000)
+    expect(passBackoffMs(2_000, 4)).toBe(32_000)
+    expect(passBackoffMs(2_000, 30)).toBe(MAX_PASS_BACKOFF_MS)
+  })
+
+  it('turns a misconfiguration into a handful of attempts, not hundreds', async () => {
+    // Це не гіпотеза: на першому деплої тік у дві секунди × неправильний пароль
+    // дав стільки невдалих автентифікацій, що Supabase увімкнув ECIRCUITBREAKER,
+    // після чого правильний пароль теж якийсь час не проходив.
+    await seedPending()
+    let passes = 0
+    const publisher = startPublisher({
+      db,
+      chain: fakeChain({
+        getLatestBlockhash: async () => {
+          passes += 1
+          throw new Error('(ECIRCUITBREAKER) too many authentication failures')
+        },
+      }),
+      config,
+      logger: silent,
+      tickMs: 5,
+    })
+
+    await settle(400)
+    await publisher.stop()
+
+    // Без відступу за 400 мс із тіком 5 мс вийшло б кілька десятків проходів.
+    expect(passes).toBeGreaterThan(0)
+    expect(passes).toBeLessThanOrEqual(8)
+    expect(publisher.snapshot().sleepMs).toBeGreaterThan(5)
+  })
+
+  it('drops back to the tick the moment a pass succeeds', async () => {
+    // Рядок засівається **до** старту: PGlite — одне зʼєднання, і запис поруч
+    // із проходом циклу кладе wasm-процес. Та сама причина нижче.
+    await seedPending()
+    let calls = 0
+    const publisher = startPublisher({
+      db,
+      chain: fakeChain({
+        getRecentPrioritizationFees: async () => {
+          calls += 1
+          if (calls === 1) throw new Error('rpc is away')
+          return [{ prioritizationFee: 0 }]
+        },
+      }),
+      config,
+      logger: silent,
+      tickMs: 5,
+    })
+
+    await settle(200)
+    const state = publisher.snapshot()
+    await publisher.stop()
+
+    expect(state.consecutiveFailures).toBe(0)
+    expect(state.sleepMs).toBe(5)
+  })
+})
+
+describe('знімок циклу', () => {
+  it('counts passes and remembers when the last one ended', async () => {
+    const publisher = startPublisher({ db, chain: fakeChain(), config, logger: silent, tickMs: 5 })
+
+    await settle(60)
+    const state = publisher.snapshot()
+    await publisher.stop()
+
+    expect(state.running).toBe(true)
+    expect(state.passes).toBeGreaterThan(0)
+    expect(state.lastPassEndedAt).not.toBeNull()
+    expect(state.lastOkAt).not.toBeNull()
+  })
+
+  it('says it is no longer running once stopped — pending rows are then nobody’s', async () => {
+    const publisher = startPublisher({ db, chain: fakeChain(), config, logger: silent, tickMs: 5 })
+    await publisher.stop()
+
+    expect(publisher.snapshot().running).toBe(false)
+  })
+
+  it('carries counters and nothing that could hold a connection string', async () => {
+    await seedPending()
+    // Єдиний споживач знімка — публічний `/health` без ключа. Текст помилки
+    // драйвера найчастіше несе рядок підключення разом із паролем, тож поля
+    // з повідомленням тут немає взагалі — і це перевіряється, а не мається на увазі.
+    const publisher = startPublisher({
+      db,
+      chain: fakeChain({
+        getLatestBlockhash: async () => {
+          throw new Error('postgres://user:hunter2@db.example:5432/postgres is unreachable')
+        },
+      }),
+      config,
+      logger: silent,
+      tickMs: 5,
+    })
+
+    await settle(60)
+    const state = publisher.snapshot()
+    await publisher.stop()
+
+    expect(state.consecutiveFailures).toBeGreaterThan(0)
+    expect(JSON.stringify(state)).not.toContain('hunter2')
+    expect(Object.keys(state)).toEqual([
+      'running',
+      'passes',
+      'lastPassEndedAt',
+      'lastOkAt',
+      'lastFailureAt',
+      'consecutiveFailures',
+      'sleepMs',
+    ])
   })
 })
