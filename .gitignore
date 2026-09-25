@@ -28,6 +28,9 @@ coverage/
 # Локальний буфер SDK і архіви
 .agenttrace/
 
+# Logs of the day-long measurement runs (T064) — data, not code
+.runs/
+
 # Редактори і ОС
 .DS_Store
 Thumbs.db

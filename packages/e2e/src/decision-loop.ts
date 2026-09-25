@@ -91,7 +91,7 @@ export interface ScenarioReport {
  */
 const NO_STORE: RequestInit = { cache: 'no-store' }
 
-async function publicRead(
+export async function publicRead(
   fetchImpl: HttpFetch,
   endpoint: string,
   decisionId: string,
@@ -110,8 +110,14 @@ async function publicRead(
  * посилання. Своєї логіки станів тут немає жодного рядка — інакше сценарій
  * доводив би сам себе.
  */
-async function verifiedNow(
-  deps: ScenarioDeps,
+/** What the verdict needs, and nothing more — the day-long run (T064) has no scenario to hand over. */
+export interface VerifierDeps {
+  readonly endpoint: string
+  readonly chain: ChainSource
+}
+
+export async function verifiedNow(
+  deps: VerifierDeps,
   fetchImpl: HttpFetch,
   decisionId: string,
   agentPubkey: string,

@@ -9,6 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "daily": "tsx src/daily.ts",
+    "daily:report": "tsx src/daily-report.ts",
     "demo": "tsx src/demo.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
