@@ -98,7 +98,11 @@ const storage = storageGrowth(probes)
 const uptime = availability(probes)
 
 const lastProbe = probes[probes.length - 1]
-const harnessChainCalls = asNumber(field(of('end')[0] ?? header, 'harnessChainCalls')) || 0
+// A run that dies never writes `end`, but every probe carries the running count:
+// falling back to the header would report an instrument that made no calls at all.
+const lastProbeLine = of('probe')[of('probe').length - 1]
+const harnessChainCalls =
+  asNumber(field(of('end')[0] ?? lastProbeLine ?? header, 'harnessChainCalls')) || 0
 
 const sdkMs = submitted.map((one) => asNumber(field(one, 'sdkMs'))).filter(Number.isFinite)
 const sdkWorst = sdkMs.length === 0 ? Number.NaN : Math.max(...sdkMs)
