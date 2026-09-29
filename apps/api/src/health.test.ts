@@ -425,6 +425,21 @@ describe('rpc budget (T076)', () => {
     })
   })
 
+  it('carries the tally through the route, not only through the reporter', async () => {
+    // The route used to list report fields by hand, and the tally was built,
+    // tested and then dropped on the way out — found on the first deploy.
+    const app = createApp({
+      logger: silentLogger(),
+      health: createHealthReporter(
+        deps({ rpcCalls: () => ({ sinceMs: Date.now(), total: 3, byMethod: { getSlot: 3 } }) }),
+      ),
+    })
+
+    const body = await (await app.request('/health')).json()
+
+    expect(body).toMatchObject({ rpc: { total: 3, byMethod: { getSlot: 3 } } })
+  })
+
   it('says null rather than zero when this process has no rpc client', async () => {
     const reporter = createHealthReporter(deps({ chainTip: null }))
 

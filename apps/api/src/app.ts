@@ -89,6 +89,7 @@ export function createApp(options: AppOptions = {}) {
         uptimeSeconds,
         ageSeconds: report.ageSeconds,
         checks: report.checks,
+        rpc: report.rpc,
       },
       // 503 адресоване хостингу: «цей деплой не готовий». Усе, чого перезапуск
       // не лікує, лишається двохсотим із `status: "degraded"` у тілі.
