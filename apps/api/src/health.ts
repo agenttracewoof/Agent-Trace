@@ -75,6 +75,18 @@ export interface ChainCheck {
   readonly reason: Reason | null
 }
 
+/**
+ * How many RPC calls this process has made, and which (T076). Not a check — it
+ * has no status: it is the tally the owner holds against the provider's
+ * dashboard, which shows only a total. Counted from process start, so a restart
+ * resets it.
+ */
+export interface RpcCalls {
+  readonly sinceSeconds: number
+  readonly total: number
+  readonly byMethod: Readonly<Record<string, number>>
+}
+
 export interface HealthReport {
   readonly status: CheckStatus
   /** Скільки секунд звіту. Кеш на 10 с — свідомий, тож вік треба показувати. */
@@ -85,6 +97,8 @@ export interface HealthReport {
     readonly publisher: PublisherCheck
     readonly chain: ChainCheck
   }
+  /** `null` when this process has no RPC client. */
+  readonly rpc: RpcCalls | null
 }
 
 export type HealthReporter = () => Promise<HealthReport>
@@ -95,7 +109,15 @@ export interface HealthDeps {
   readonly chainTip: (() => Promise<number>) | null
   /** Знімок циклу публікації, коли він у цьому ж процесі (`RUN_PUBLISHER`). */
   readonly publisher: () => PublisherSnapshot | null
+  /** This process's RPC call tally (the publisher's `budget.ts`). */
+  readonly rpcCalls?: () => {
+    readonly sinceMs: number
+    readonly total: number
+    readonly byMethod: Readonly<Record<string, number>>
+  } | null
   readonly ttlMs?: number
+  /** How long the chain tip lives, apart from the report; see `DEFAULT_CHAIN_TIP_TTL_MS`. */
+  readonly chainTipTtlMs?: number
   readonly now?: () => number
 }
 
@@ -119,6 +141,16 @@ const CHAIN_TIMEOUT_MS = 2_000
  * у базу йде один на 10 секунд.
  */
 const DEFAULT_TTL_MS = 10_000
+
+/**
+ * The chain tip outlives the report. `getSlot` is a billed provider call and
+ * `/health` is polled without pause (Render's healthcheck, the keep-alive), so
+ * with the 10 s report cache that is up to 8 640 credits a day spent idle —
+ * nearly a credit per decision in the T064 measurement. The tip is there to show
+ * that RPC is alive and how far the anchor lags; a minute-old tip answers both
+ * just as well, and `behindSlots` undercounts by at most ~150 slots.
+ */
+const DEFAULT_CHAIN_TIP_TTL_MS = 60_000
 
 interface QueueFacts {
   readonly pending: number
@@ -317,7 +349,17 @@ async function collect(deps: HealthDeps, clock: () => number): Promise<HealthRep
     'ok',
   )
 
-  return { status, ageSeconds: 0, checks }
+  const counted = deps.rpcCalls?.() ?? null
+  const rpc: RpcCalls | null =
+    counted === null
+      ? null
+      : {
+          sinceSeconds: Math.round((clock() - counted.sinceMs) / 1000),
+          total: counted.total,
+          byMethod: counted.byMethod,
+        }
+
+  return { status, ageSeconds: 0, checks, rpc }
 }
 
 /**
@@ -329,11 +371,28 @@ export function createHealthReporter(deps: HealthDeps): HealthReporter {
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS
   const clock = deps.now ?? (() => Date.now())
 
+  const tipTtlMs = deps.chainTipTtlMs ?? DEFAULT_CHAIN_TIP_TTL_MS
+  const askTip = deps.chainTip
+  let tip: { readonly at: number; readonly slot: number } | null = null
+  // Only an answer is cached: a failure is asked again on the next report,
+  // because "RPC is silent" has to reach `/health` in 10 s, not in a minute.
+  const cachedTip =
+    askTip === null
+      ? null
+      : async (): Promise<number> => {
+          const at = clock()
+          if (tip !== null && at - tip.at < tipTtlMs) return tip.slot
+          const slot = await askTip()
+          tip = { at, slot }
+          return slot
+        }
+  const collected: HealthDeps = { ...deps, chainTip: cachedTip }
+
   let cached: { readonly at: number; readonly report: HealthReport } | null = null
   let inFlight: Promise<HealthReport> | null = null
 
   const refresh = async (): Promise<HealthReport> => {
-    const report = await collect(deps, clock)
+    const report = await collect(collected, clock)
     cached = { at: clock(), report }
     return report
   }

@@ -5,6 +5,7 @@ import {
   buildSchedule,
   coverage,
   DAY_MS,
+  HELIUS_FREE_CREDITS,
   LAMPORTS_PER_SOL,
   type LatencySample,
   type Probe,
@@ -91,6 +92,7 @@ const probes: Probe[] = of('probe').map((one) => ({
   dbBytes: asNumber(field(one, 'dbBytes')),
   uptimeSeconds: asNumber(field(one, 'uptimeSeconds')),
   publisherPasses: asNumber(field(one, 'publisherPasses')),
+  rpcCalls: asNumber(field(one, 'rpcCalls')) || 0,
 }))
 
 const cost = summarizeCost(probes, solUsd)
@@ -103,6 +105,30 @@ const lastProbe = probes[probes.length - 1]
 const lastProbeLine = of('probe')[of('probe').length - 1]
 const harnessChainCalls =
   asNumber(field(of('end')[0] ?? lastProbeLine ?? header, 'harnessChainCalls')) || 0
+
+/**
+ * The Helius line in the provider's own unit. Calls, not credits: a standard
+ * call costs one credit, but the bill is the owner's dashboard, and the
+ * report says so below. Decisions anchored over the same probe span, so both
+ * sides of the ratio cover the same stretch of time.
+ */
+const firstProbe = probes[0]
+const anchoredOverProbes =
+  firstProbe === undefined || lastProbe === undefined
+    ? 0
+    : lastProbe.anchoredUpToSlot - firstProbe.anchoredUpToSlot
+const rpcPerDecision = anchoredOverProbes > 0 ? uptime.rpcCalls / anchoredOverProbes : Number.NaN
+const rpcPerMonth = rpcPerDecision * 10_000 * 30
+const heliusLines =
+  uptime.rpcCalls === 0
+    ? [
+        `  Helius, our side   product calls ${uptime.publisherPasses} publisher passes + ${cost.anchored} sends;`,
+        '                     no rpc tally in this log — the process predates the counter (T076)',
+      ]
+    : [
+        `  Helius, our side   ${uptime.rpcCalls} rpc calls over ${anchoredOverProbes} decisions = ${rpcPerDecision.toFixed(2)} per decision`,
+        `                     ${(rpcPerMonth / 1_000_000).toFixed(2)} M/month at 10 000/day of ${HELIUS_FREE_CREDITS / 1_000_000} M free · ${rpcPerMonth <= HELIUS_FREE_CREDITS ? 'pass' : 'FAIL'}`,
+      ]
 
 const sdkMs = submitted.map((one) => asNumber(field(one, 'sdkMs'))).filter(Number.isFinite)
 const sdkWorst = sdkMs.length === 0 ? Number.NaN : Math.max(...sdkMs)
@@ -157,7 +183,7 @@ const lines = [
   `  Supabase database  ${mb(storage.bytesNow)} MB now, +${mb(storage.bytesPerDay)} MB/day, ceiling ${mb(storage.ceilingBytes)} MB`,
   `                     ${Number.isFinite(storage.daysToCeiling) ? `${storage.daysToCeiling.toFixed(0)} days of headroom — this is why FR-028 exists` : 'no growth observed'}`,
   `  Render instance    ${uptime.restarts} restart(s) observed; awake under our traffic implies ${uptime.monthlyInstanceHours} h/month of ${uptime.freeInstanceHours} free`,
-  `  Helius, our side   product calls ${uptime.publisherPasses} publisher passes + ${cost.anchored} sends;`,
+  ...heliusLines,
   `                     harness calls ${harnessChainCalls}, excluded — the instrument is not the product`,
   '  GitHub Pages       not exercised by this run',
   '',

@@ -66,6 +66,12 @@ export interface ChainClient {
     signatures: string[],
   ): Promise<{ readonly value: readonly (SignatureStatusLike | null)[] }>
   getRecentPrioritizationFees(): Promise<readonly { readonly prioritizationFee: number }[]>
+  /**
+   * Present only on the caching client (`budget.ts`). A failed send may have
+   * failed on the cached blockhash itself, and the next pass has to take a fresh
+   * one rather than repeat the same failure until the cache window runs out.
+   */
+  forgetBlockhash?(): void
 }
 
 export interface PublisherConfig {
@@ -252,6 +258,10 @@ interface SentAnchor {
  * блокхеш живе ~60–90 с, стеля комісії описує стан мережі, а не окремий запис,
  * і саме ці два запити на кожне рішення й робили публікацію послідовною ціною
  * ~1,4 с за штуку (замір T036).
+ *
+ * Above the pass sits a 30 s cache as well (`budget.ts`, T076): with sparse
+ * arrivals "once per pass" meant "once per decision", and these two requests
+ * were two of the five credits each decision cost.
  */
 async function sendOne(
   db: AnyPgDatabase,
@@ -308,7 +318,12 @@ async function confirmBatch(
   const waiting = new Map(sent.map((one) => [one.anchorSignature, one.row]))
   let published = 0
 
+  // Sleep **before** polling, not after: a transaction sent a moment ago is
+  // never `confirmed` — it needs at least a slot and the votes. The poll at
+  // zero seconds cost a credit per decision and found nothing (T076); the
+  // remaining polls land at the same moments, so SC-001 does not move.
   for (let poll = 0; poll < CONFIRM_POLLS && waiting.size > 0; poll += 1) {
+    await sleep(CONFIRM_POLL_MS)
     const statuses = await statusesOf(chain, [...waiting.keys()])
 
     for (const [anchorSignature, row] of [...waiting]) {
@@ -324,8 +339,6 @@ async function confirmBatch(
         waiting.delete(anchorSignature)
       }
     }
-
-    if (waiting.size > 0) await sleep(CONFIRM_POLL_MS)
   }
 
   // Те, що не підтвердилося за відведені поли, не втрачене: підпис у базі, і
@@ -394,6 +407,7 @@ export async function publishPending(
     )
     for (const one of results) if (one !== undefined) sent.push(one)
   }
+  if (sent.length < toSend.length) chain.forgetBlockhash?.()
 
   return inFlight.published + (await confirmBatch(db, chain, sent, sleep))
 }

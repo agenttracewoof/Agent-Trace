@@ -25,6 +25,7 @@ const probe = (over: Partial<Probe> & Pick<Probe, 'atMs' | 'slot'>): Probe => ({
   dbBytes: 0,
   uptimeSeconds: 0,
   publisherPasses: 0,
+  rpcCalls: 0,
   ...over,
 })
 
@@ -341,5 +342,15 @@ describe('free tier lines', () => {
     expect(measured.publisherPasses).toBe(1_860)
     expect(measured.monthlyInstanceHours).toBe(720)
     expect(measured.freeInstanceHours).toBe(750)
+  })
+
+  it('adds up rpc calls per segment, the way it adds up passes', () => {
+    const measured = availability([
+      probe({ atMs: START, slot: 1, uptimeSeconds: 3_600, rpcCalls: 10_000 }),
+      probe({ atMs: START + 3_600_000, slot: 2, uptimeSeconds: 7_200, rpcCalls: 12_000 }),
+      probe({ atMs: START + 7_200_000, slot: 3, uptimeSeconds: 120, rpcCalls: 300 }),
+    ])
+
+    expect(measured.rpcCalls).toBe(2_300)
   })
 })

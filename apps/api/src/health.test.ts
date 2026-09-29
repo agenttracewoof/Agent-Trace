@@ -337,6 +337,9 @@ describe('кеш перевірок', () => {
     const reporter = createHealthReporter(
       deps({
         ttlMs: 10_000,
+        // The tip only witnesses that the report was re-read here; the tip's
+        // own cache is checked by the block below.
+        chainTipTtlMs: 0,
         now: () => clock,
         chainTip: async () => {
           tips += 1
@@ -350,5 +353,81 @@ describe('кеш перевірок', () => {
     await reporter()
 
     expect(tips).toBe(2)
+  })
+})
+
+describe('rpc budget (T076)', () => {
+  it('asks the chain for its tip once a minute, not on every report', async () => {
+    let clock = 1_000_000
+    let tips = 0
+    const reporter = createHealthReporter(
+      deps({
+        ttlMs: 10_000,
+        now: () => clock,
+        chainTip: async () => {
+          tips += 1
+          return 1_000 + tips
+        },
+      }),
+    )
+
+    // Six reports a minute — exactly how the host's healthcheck polls.
+    for (let report = 0; report < 6; report += 1) {
+      await reporter()
+      clock += 10_000
+    }
+    expect(tips).toBe(1)
+
+    clock += 1_000
+    const later = await reporter()
+    expect(tips).toBe(2)
+    expect(later.checks.chain.tipSlot).toBe(1_002)
+  })
+
+  it('asks again on the next report after a silent endpoint, instead of caching the silence', async () => {
+    let clock = 1_000_000
+    let tips = 0
+    const reporter = createHealthReporter(
+      deps({
+        ttlMs: 10_000,
+        now: () => clock,
+        chainTip: async () => {
+          tips += 1
+          if (tips === 1) throw new Error('429')
+          return 1_000
+        },
+      }),
+    )
+
+    expect((await reporter()).checks.chain.status).toBe('unknown')
+    clock += 10_000
+    expect((await reporter()).checks.chain.status).toBe('ok')
+    expect(tips).toBe(2)
+  })
+
+  it('reports rpc calls by method so the provider bill can be checked against them', async () => {
+    const clock = 1_000_000
+    const reporter = createHealthReporter(
+      deps({
+        now: () => clock,
+        rpcCalls: () => ({
+          sinceMs: clock - 3_600_000,
+          total: 7,
+          byMethod: { getSlot: 2, sendRawTransaction: 5 },
+        }),
+      }),
+    )
+
+    expect((await reporter()).rpc).toEqual({
+      sinceSeconds: 3_600,
+      total: 7,
+      byMethod: { getSlot: 2, sendRawTransaction: 5 },
+    })
+  })
+
+  it('says null rather than zero when this process has no rpc client', async () => {
+    const reporter = createHealthReporter(deps({ chainTip: null }))
+
+    expect((await reporter()).rpc).toBeNull()
   })
 })

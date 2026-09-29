@@ -579,3 +579,79 @@ describe('one pass, one round trip', () => {
     expect(row.attempts).toBe(0)
   })
 })
+
+describe('rpc budget in a pass (T076)', () => {
+  it('sleeps before the first status poll: a transaction sent a moment ago is never confirmed', async () => {
+    await seedDecision()
+    const order: string[] = []
+
+    await publishPending(
+      db,
+      fakeChain({
+        sendRawTransaction: async () => {
+          order.push('send')
+          return 'sent'
+        },
+        getSignatureStatuses: async (signatures) => {
+          order.push('poll')
+          return {
+            value: signatures.map(() => ({
+              slot: 500,
+              confirmationStatus: 'confirmed',
+              err: null,
+            })),
+          }
+        },
+      }),
+      {
+        ...config,
+        sleep: async () => {
+          order.push('sleep')
+        },
+      },
+    )
+
+    expect(order).toEqual(['send', 'sleep', 'poll'])
+    expect((await readDecision()).status).toBe('anchored')
+  })
+
+  it('drops the cached blockhash after a failed send, so the next pass does not repeat it', async () => {
+    await seedDecision()
+    let forgotten = 0
+
+    await publishPending(
+      db,
+      {
+        ...fakeChain({
+          sendRawTransaction: async () => {
+            throw new Error('Blockhash not found')
+          },
+        }),
+        forgetBlockhash: () => {
+          forgotten += 1
+        },
+      },
+      config,
+    )
+
+    expect(forgotten).toBe(1)
+  })
+
+  it('keeps the cached blockhash when every send went through', async () => {
+    await seedDecision()
+    let forgotten = 0
+
+    await publishPending(
+      db,
+      {
+        ...fakeChain(),
+        forgetBlockhash: () => {
+          forgotten += 1
+        },
+      },
+      config,
+    )
+
+    expect(forgotten).toBe(0)
+  })
+})

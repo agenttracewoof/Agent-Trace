@@ -1,5 +1,6 @@
 import { Connection, Keypair } from '@solana/web3.js'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
+import { cachedChain } from './budget.js'
 import { type ChainClient, type PublisherConfig, publishPending } from './loop.js'
 
 /**
@@ -12,6 +13,8 @@ import { type ChainClient, type PublisherConfig, publishPending } from './loop.j
  * рішення (R10). Двопроцесний запуск нікуди не дівся: `index.ts` лишається
  * тонкою обгорткою навколо цього ж коду.
  */
+
+export { type CallCounts, countCalls } from './budget.js'
 
 type AnyPgDatabase = PgDatabase<PgQueryResultHKT, Record<string, unknown>>
 
@@ -86,6 +89,9 @@ export function passBackoffMs(tickMs: number, consecutiveFailures: number): numb
 
 export function startPublisher(options: StartPublisherOptions): RunningPublisher {
   const tickMs = options.tickMs ?? DEFAULT_TICK_MS
+  // The cache lives exactly as long as the loop: the blockhash and the fee
+  // reading are shared across passes, not owned by a decision (T076).
+  const chain = cachedChain(options.chain)
   let running = true
   let wake: (() => void) | undefined
 
@@ -112,7 +118,7 @@ export function startPublisher(options: StartPublisherOptions): RunningPublisher
   const finished = (async () => {
     while (running) {
       try {
-        const published = await publishPending(options.db, options.chain, options.config)
+        const published = await publishPending(options.db, chain, options.config)
         if (published > 0) options.logger.info({ published }, 'anchored')
         consecutiveFailures = 0
         lastOkAt = Date.now()

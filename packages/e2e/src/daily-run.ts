@@ -120,6 +120,11 @@ export interface Probe {
   /** Deployed process uptime, which resets on every restart of the free instance. */
   readonly uptimeSeconds: number
   readonly publisherPasses: number
+  /**
+   * RPC calls the deployed process has made since it started (`/health` → `rpc`,
+   * T076). Zero in logs from before the counter existed.
+   */
+  readonly rpcCalls: number
 }
 
 export type CostWindowNote = 'topped-up' | 'no-decisions'
@@ -394,9 +399,13 @@ export interface Availability {
   readonly monthlyInstanceHours: number
   readonly freeInstanceHours: number
   readonly publisherPasses: number
+  readonly rpcCalls: number
 }
 
 export const RENDER_FREE_INSTANCE_HOURS = 750
+
+/** Helius free plan: credits per monthly cycle. A standard RPC call costs one. */
+export const HELIUS_FREE_CREDITS = 1_000_000
 
 /**
  * A restart shows up as uptime running backwards; nothing else does. The free
@@ -412,6 +421,8 @@ export function availability(probes: readonly Probe[]): Availability {
   // process, so subtracting the first observation from the last would hand back
   // a negative number the moment the free instance is recycled.
   let publisherPasses = 0
+  // The rpc tally lives in the same process and resets with it, for the same reason.
+  let rpcCalls = 0
 
   for (let index = 1; index < probes.length; index += 1) {
     const before = probes[index - 1]
@@ -421,9 +432,11 @@ export function availability(probes: readonly Probe[]): Availability {
     if (after.uptimeSeconds < before.uptimeSeconds) {
       restarts += 1
       publisherPasses += after.publisherPasses
+      rpcCalls += after.rpcCalls
       continue
     }
     publisherPasses += after.publisherPasses - before.publisherPasses
+    rpcCalls += after.rpcCalls - before.rpcCalls
   }
 
   return {
@@ -432,5 +445,6 @@ export function availability(probes: readonly Probe[]): Availability {
     monthlyInstanceHours: 24 * 30,
     freeInstanceHours: RENDER_FREE_INSTANCE_HOURS,
     publisherPasses,
+    rpcCalls,
   }
 }

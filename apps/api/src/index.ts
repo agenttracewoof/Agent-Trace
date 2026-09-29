@@ -1,6 +1,7 @@
 import { createDb } from '@agenttrace/db'
 import {
   chainFromEnv,
+  countCalls,
   publisherConfigFromEnv,
   type RunningPublisher,
   startPublisher,
@@ -45,11 +46,16 @@ const db = createDb(required('DATABASE_URL'))
  */
 let publisher: RunningPublisher | undefined
 let chain: ReturnType<typeof chainFromEnv> | undefined
+let rpcCounts: ReturnType<typeof countCalls>['counts'] | undefined
 
 if (process.env.RUN_PUBLISHER === 'true') {
   try {
     const config = publisherConfigFromEnv(process.env)
-    chain = chainFromEnv(process.env)
+    // One counted client for the publisher and `/health`: the provider's
+    // dashboard sees the process's calls as one total, and so must the tally (T076).
+    const counted = countCalls(chainFromEnv(process.env))
+    chain = counted.client
+    rpcCounts = counted.counts
     publisher = startPublisher({
       db,
       chain,
@@ -87,6 +93,7 @@ const app = createApp({
     db,
     chainTip: rpc === undefined ? null : () => rpc.getSlot(),
     publisher: () => publisher?.snapshot() ?? null,
+    rpcCalls: () => rpcCounts?.() ?? null,
   }),
 })
 app.route('/v1', agentRoutes(db))

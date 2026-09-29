@@ -254,6 +254,8 @@ async function probe(): Promise<void> {
     const health: unknown = await (await fetch(`${endpoint}/health`, { cache: 'no-store' })).json()
     const passes = (health as { checks?: { publisher?: { passes?: number } } }).checks?.publisher
       ?.passes
+    const rpc = (health as { rpc?: { total?: number; byMethod?: Record<string, number> } | null })
+      .rpc
 
     write({
       t: 'probe',
@@ -264,6 +266,8 @@ async function probe(): Promise<void> {
       dbBytes,
       uptimeSeconds: Number((health as { uptimeSeconds?: number }).uptimeSeconds ?? 0),
       publisherPasses: Number(passes ?? 0),
+      rpcCalls: Number(rpc?.total ?? 0),
+      rpcByMethod: rpc?.byMethod ?? {},
       harnessChainCalls: chainCalls.count,
     })
   } catch (error) {
