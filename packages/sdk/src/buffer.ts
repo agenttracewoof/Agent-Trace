@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseSignedManifest, type SignedManifest } from '@agenttrace/manifest'
+import { hasErrnoCode } from './errno.js'
 
 const OWNER_ONLY = 0o600
 const SUFFIX = '.json'
@@ -27,10 +28,6 @@ function asError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause))
 }
 
-function isMissing(cause: unknown): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
-}
-
 /**
  * Ім'я несе час рішення попереду, тож сортування назв — це вже черга від
  * найстарішого. Інакше довгий обрив зв'язку виглядав би так: свіжі рішення
@@ -54,7 +51,7 @@ export function openDecisionBuffer(directory: string): DecisionBuffer {
       const names = await readdir(directory)
       return names.filter((name) => name.endsWith(SUFFIX)).sort()
     } catch (cause) {
-      if (isMissing(cause)) return []
+      if (hasErrnoCode(cause, 'ENOENT')) return []
       throw cause
     }
   }

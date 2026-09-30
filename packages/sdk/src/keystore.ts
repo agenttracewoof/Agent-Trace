@@ -8,6 +8,7 @@ import {
   toHex,
 } from '@agenttrace/manifest'
 import { z } from 'zod'
+import { hasErrnoCode } from './errno.js'
 
 export const KEYSTORE_VERSION = 1
 
@@ -20,10 +21,6 @@ const keystoreSchema = z.strictObject({
   publicKey: hexDigest(32),
   privateKey: z.string().regex(/^([0-9a-f]{2})+$/, 'expected lowercase hex byte pairs'),
 })
-
-function hasCode(cause: unknown, code: string): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === code
-}
 
 /**
  * Помилка розбору несе тільки шлях. І `JSON.parse`, і Zod охоче цитують те, що
@@ -68,7 +65,7 @@ async function read(path: string): Promise<AgentKeyPair | undefined> {
   try {
     raw = await readFile(path, 'utf8')
   } catch (cause) {
-    if (hasCode(cause, 'ENOENT')) return undefined
+    if (hasErrnoCode(cause, 'ENOENT')) return undefined
     throw cause
   }
   return assertPairMatches(parseKeystore(raw, path))
@@ -94,7 +91,7 @@ async function create(path: string): Promise<AgentKeyPair> {
       mode: OWNER_ONLY,
     })
   } catch (cause) {
-    if (!hasCode(cause, 'EEXIST')) throw cause
+    if (!hasErrnoCode(cause, 'EEXIST')) throw cause
     const existing = await read(path)
     if (existing === undefined) throw cause
     return existing

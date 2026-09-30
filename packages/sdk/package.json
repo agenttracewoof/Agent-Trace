@@ -1,6 +1,6 @@
 {
   "name": "@agenttracewoof/sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Record what an AI agent decided and why, sign it, and anchor it on Solana so anyone can check it later.",
   "license": "MIT",
   "type": "module",

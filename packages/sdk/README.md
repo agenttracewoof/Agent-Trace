@@ -42,6 +42,12 @@ await trace.flush() // only needed in a script that exits right after
 - **Short-lived scripts must `await trace.flush()` before exiting**, otherwise the
   process can end before the queue is sent. A long-running agent does not need it.
   Nothing is lost either way: what is left in the queue is sent on the next start.
+- `createClient` is async: it loads or creates the agent's key. Use top-level `await`, or
+  keep the promise and await it where you record (`const trace = createClient(...)`, then
+  `await (await trace).record(...)`).
+- **Do not await `flush()` in the path of a decision** — that makes your agent wait on the
+  network, which the background delivery exists to avoid. Call it where the process ends:
+  at the end of a script, in a test runner's `afterAll`, in a shutdown hook.
 - A decision with no steps is refused: there would be nothing to attest.
 - `sources` (optional) lists the data the decision relied on, as URIs; duplicates are
   dropped.
@@ -50,7 +56,8 @@ await trace.flush() // only needed in a script that exits right after
 
 - **One decision per thing your agent decided** — an answer, a trade, an approval.
 - **`model`** is the model identifier as your agent uses it (`'claude-haiku-4-5'`,
-  `'gpt-4o-mini'`). It is published as it is.
+  `'gpt-4o-mini'`) — any non-empty string up to 128 characters, so a rule-based agent
+  can name itself. It is published as it is.
 - **`steps`** are what led there, in order: each model call and each tool call can be its
   own step (`type: 'llm'`, `type: 'tool:calculator'`, …). One step with the question
   and the final answer is enough to start; record more when you want them checkable.
