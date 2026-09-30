@@ -2,8 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifySignedManifest } from '@agenttrace/manifest'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { type AgentTraceClient, type ClientOptions, createClient } from './client.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  type AgentTraceClient,
+  type ClientOptions,
+  createClient,
+  DEFAULT_ENDPOINT,
+  INGEST_KEY_ENV,
+} from './client.js'
 
 const AGENT_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
 const PUBLIC_URL = 'https://agenttrace.example/d/1'
@@ -223,5 +229,94 @@ describe('createClient', () => {
     expect(summary.stoppedBy?.message).toMatch(/401/)
     expect(api.to('/v1/decisions')).toHaveLength(0)
     expect(await client.rejected()).toBe(0)
+  })
+})
+
+describe('createClient defaults', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  /** Only what a host project must decide itself: who the agent is, what may be published. */
+  function bare(fetch: ClientOptions['fetch'], extra: Partial<ClientOptions> = {}) {
+    return createClient({
+      agent: { externalId: 'quote-bot', name: 'Quote bot' },
+      policy: { stepInput: ['query'], stepOutput: ['rows'], outcome: ['approved'] },
+      stateDir: directory,
+      onError: () => {},
+      ...(fetch === undefined ? {} : { fetch }),
+      ...extra,
+    })
+  }
+
+  it('talks to the hosted API and reads the key from the environment', async () => {
+    vi.stubEnv(INGEST_KEY_ENV, 'from-env')
+    const api = server()
+    const client = await bare(api.fetch)
+
+    await decide(client)
+    await client.flush()
+
+    const [registration] = api.to('/v1/agents')
+    expect(registration?.url).toBe(`${DEFAULT_ENDPOINT}/v1/agents`)
+    expect(registration?.init.headers).toMatchObject({ authorization: 'Bearer from-env' })
+  })
+
+  it('prefers a key passed in over the environment', async () => {
+    vi.stubEnv(INGEST_KEY_ENV, 'from-env')
+    const api = server()
+    const client = await bare(api.fetch, { ingestKey: 'passed' })
+
+    await decide(client)
+    await client.flush()
+
+    expect(api.to('/v1/agents')[0]?.init.headers).toMatchObject({ authorization: 'Bearer passed' })
+  })
+
+  it('refuses to start without a key, instead of queueing behind a 401', async () => {
+    vi.stubEnv(INGEST_KEY_ENV, '')
+    const api = server()
+
+    await expect(bare(api.fetch)).rejects.toThrow(INGEST_KEY_ENV)
+    await expect(bare(api.fetch, { ingestKey: '  ' })).rejects.toThrow('no ingest key')
+    expect(api.calls).toHaveLength(0)
+  })
+})
+
+describe('record', () => {
+  it('signs and sends a complete decision in one call, and returns its id', async () => {
+    const api = server()
+    const client = await open({ fetch: api.fetch })
+
+    const decisionId = await client.record({
+      model: 'claude-opus-5',
+      sources: ['https://quotes.example/1', 'https://quotes.example/1'],
+      steps: [
+        { type: 'retrieval', input: { query: 'q', apiKey: 'sk-live-1' }, output: { rows: 2 } },
+        { type: 'check', input: { query: 'r' }, output: { rows: 0 } },
+      ],
+      outcome: { approved: true, token: 'sk-live-2' },
+    })
+    await client.flush()
+
+    const envelope = api.body(api.to('/v1/decisions')[0]) as {
+      manifest: { decisionId: string; sources: string[]; steps: unknown[]; outcome: unknown }
+    }
+    expect(envelope.manifest.decisionId).toBe(decisionId)
+    expect(envelope.manifest.sources).toEqual(['https://quotes.example/1'])
+    expect(envelope.manifest.steps).toHaveLength(2)
+    // The policy applies exactly as for the step-by-step recorder.
+    expect(envelope.manifest.outcome).toEqual({ approved: true })
+    expect(JSON.stringify(envelope)).not.toContain('sk-live')
+  })
+
+  it('refuses a decision with no steps, like the recorder does', async () => {
+    const api = server()
+    const client = await open({ fetch: api.fetch })
+
+    await expect(client.record({ model: 'm', steps: [], outcome: null })).rejects.toThrow(
+      'no steps',
+    )
+    expect(await client.pending()).toBe(0)
   })
 })

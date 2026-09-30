@@ -12,11 +12,19 @@ import { type DecisionRecorder, startDecision } from './recorder.js'
 
 const DEFAULT_STATE_DIR = '.agenttrace'
 
+/** The hosted AgentTrace API. A self-hosted one is passed as `endpoint`. */
+export const DEFAULT_ENDPOINT = 'https://agenttrace-api-cr1b.onrender.com'
+
+/** Where the ingest key is read from when `ingestKey` is not passed. */
+export const INGEST_KEY_ENV = 'AGENTTRACE_INGEST_KEY'
+
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
 export interface ClientOptions {
-  readonly endpoint: string
-  readonly ingestKey: string
+  /** Defaults to {@link DEFAULT_ENDPOINT}. */
+  readonly endpoint?: string
+  /** Defaults to the `AGENTTRACE_INGEST_KEY` environment variable. */
+  readonly ingestKey?: string
   readonly agent: { readonly externalId: string; readonly name: string }
   readonly policy: RedactionPolicy
   /** Де лежать ключ і черга. За замовчуванням `.agenttrace` поруч із агентом. */
@@ -29,10 +37,24 @@ export interface ClientOptions {
   readonly onError?: (error: Error) => void
 }
 
+/** A decision that is already complete, recorded in one call. */
+export interface CompletedDecision {
+  readonly model: string
+  readonly sources?: readonly string[]
+  readonly steps: readonly {
+    readonly type: string
+    readonly input: unknown
+    readonly output: unknown
+  }[]
+  readonly outcome: unknown
+}
+
 export interface AgentTraceClient {
   readonly agentPubkey: string
   startDecision(options: { readonly model: string }): DecisionRecorder
   submit(draft: DecisionDraft): Promise<void>
+  /** Record, sign and queue a complete decision; resolves to its `decisionId`. */
+  record(decision: CompletedDecision): Promise<string>
   flush(): Promise<FlushSummary>
   pending(): Promise<number>
   rejected(): Promise<number>
@@ -57,8 +79,22 @@ class RequestFailed extends Error {
   }
 }
 
+/**
+ * A missing key is a configuration error, and it is reported at start. Taken
+ * as an empty string it would pass, and every decision would wait in the queue
+ * behind a 401 that is retried by design — quietly, until someone looked.
+ */
+function resolveIngestKey(passed: string | undefined): string {
+  const key = passed ?? process.env[INGEST_KEY_ENV]
+  if (key === undefined || key.trim() === '') {
+    throw new Error(`agenttrace: no ingest key — pass ingestKey or set ${INGEST_KEY_ENV}`)
+  }
+  return key
+}
+
 export async function createClient(options: ClientOptions): Promise<AgentTraceClient> {
-  const endpoint = options.endpoint.replace(/\/+$/, '')
+  const endpoint = (options.endpoint ?? DEFAULT_ENDPOINT).replace(/\/+$/, '')
+  const ingestKey = resolveIngestKey(options.ingestKey)
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
   const send = options.fetch ?? ((url, init) => globalThis.fetch(url, init))
   const onError = options.onError ?? (() => {})
@@ -76,7 +112,7 @@ export async function createClient(options: ClientOptions): Promise<AgentTraceCl
   async function post(path: string, body: unknown): Promise<unknown> {
     const response = await send(`${endpoint}${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${options.ingestKey}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${ingestKey}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!response.ok) throw new RequestFailed(path, response.status, await response.text())
@@ -142,19 +178,31 @@ export async function createClient(options: ClientOptions): Promise<AgentTraceCl
     return queue
   }
 
+  async function submit(draft: DecisionDraft): Promise<void> {
+    const envelope = await signManifest(await buildManifest(draft, options.policy), key)
+    await buffer.append(envelope)
+    // Свідомо без await: SC-003 обіцяє, що недоступність AgentTrace не додає
+    // до рішення агента жодної затримки. На диску воно вже є.
+    void flush().catch((cause: unknown) => {
+      onError(cause instanceof Error ? cause : new Error(String(cause)))
+    })
+  }
+
   return {
     agentPubkey: key.publicKey,
 
     startDecision: ({ model }) => startDecision({ agentPubkey: key.publicKey, model }),
 
-    async submit(draft) {
-      const envelope = await signManifest(await buildManifest(draft, options.policy), key)
-      await buffer.append(envelope)
-      // Свідомо без await: SC-003 обіцяє, що недоступність AgentTrace не додає
-      // до рішення агента жодної затримки. На диску воно вже є.
-      void flush().catch((cause: unknown) => {
-        onError(cause instanceof Error ? cause : new Error(String(cause)))
-      })
+    submit,
+
+    // The same recorder underneath, so a one-call decision obeys the same
+    // rules — no steps is refused, sources are listed once.
+    async record({ model, sources = [], steps, outcome }) {
+      const decision = startDecision({ agentPubkey: key.publicKey, model })
+      for (const uri of sources) decision.source(uri)
+      for (const step of steps) decision.step(step.type, step.input, step.output)
+      await submit(decision.finish(outcome))
+      return decision.decisionId
     },
 
     flush,

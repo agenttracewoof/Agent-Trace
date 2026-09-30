@@ -13,8 +13,9 @@ npm install @agenttracewoof/sdk
 ```
 
 You also need an **ingest key** for your project. Self-service sign-up is not there
-yet: ask the AgentTrace operator for one. Keep it out of your code — an environment
-variable is fine.
+yet: ask the AgentTrace operator for one, and put it in the environment as
+`AGENTTRACE_INGEST_KEY` (a `.env` file loaded by `dotenv` is fine). The client reads it
+from there; without it, `createClient` throws at start instead of failing later.
 
 ## Record a decision
 
@@ -22,28 +23,52 @@ variable is fine.
 import { createClient } from '@agenttracewoof/sdk'
 
 const trace = await createClient({
-  endpoint: 'https://agenttrace-api-cr1b.onrender.com',
-  ingestKey: process.env.AGENTTRACE_INGEST_KEY ?? '',
   agent: { externalId: 'my-agent', name: 'My agent' },
   policy: { stepInput: ['query'], stepOutput: ['answer'], outcome: ['action'] },
 })
 
+const id = await trace.record({
+  model: 'gpt-4o-mini',
+  steps: [{ type: 'llm', input: { query: 'Should I rebalance?' }, output: { answer: 'yes' } }],
+  outcome: { action: 'rebalance' },
+})
+
+await trace.flush() // only needed in a script that exits right after
+```
+
+- `record` signs the decision, writes it to a local queue and resolves to its
+  `decisionId`. Delivery happens in the background, so AgentTrace being slow or down
+  never slows your agent.
+- **Short-lived scripts must `await trace.flush()` before exiting**, otherwise the
+  process can end before the queue is sent. A long-running agent does not need it.
+  Nothing is lost either way: what is left in the queue is sent on the next start.
+- A decision with no steps is refused: there would be nothing to attest.
+- `sources` (optional) lists the data the decision relied on, as URIs; duplicates are
+  dropped.
+
+### What to put in a decision
+
+- **One decision per thing your agent decided** — an answer, a trade, an approval.
+- **`model`** is the model identifier as your agent uses it (`'claude-haiku-4-5'`,
+  `'gpt-4o-mini'`). It is published as it is.
+- **`steps`** are what led there, in order: each model call and each tool call can be its
+  own step (`type: 'llm'`, `type: 'tool:calculator'`, …). One step with the question
+  and the final answer is enough to start; record more when you want them checkable.
+- **`outcome`** is any JSON value: `{ answer }`, `{ action, size }`, a string inside an
+  object. What is published of it is decided by the policy, below.
+
+### Recording step by step
+
+When a decision takes a while and you want each step written as it happens, use the
+recorder instead — it is what `record` does underneath:
+
+```ts
 const decision = trace.startDecision({ model: 'gpt-4o-mini' })
 decision.source('https://api.example.com/prices')
 decision.step('llm', { query: 'Should I rebalance?' }, { answer: 'yes' })
 await trace.submit(decision.finish({ action: 'rebalance' }))
-
 console.log(decision.decisionId)
 ```
-
-- `startDecision` → `step` (one or more) → `finish(outcome)` → `submit`. A decision
-  with no steps is refused: there would be nothing to attest.
-- `source(uri)` is optional: the data sources the decision relied on, each listed once.
-- `submit` signs the decision and writes it to a local queue, then returns. Delivery
-  happens in the background, so AgentTrace being slow or down never slows your agent.
-- **Short-lived scripts must `await trace.flush()` before exiting**, otherwise the
-  process can end before the queue is sent. What is left in the queue is sent on the
-  next start — nothing is lost, it just arrives later.
 
 ## What gets published: the policy
 
@@ -86,10 +111,11 @@ time to time — an anchor there is a demo, not a permanent proof.
 
 | | |
 |---|---|
-| `createClient(options)` | `endpoint`, `ingestKey`, `agent`, `policy`; optional `stateDir`, `fetch`, `onError` |
-| `client.startDecision({ model })` | returns a recorder with `decisionId`, `source`, `step`, `finish` |
-| `client.submit(draft)` | sign, queue, send in the background |
-| `client.flush()` | send what is queued; resolves to `{ sent, pending, stoppedBy? }` |
+| `createClient(options)` | `agent`, `policy`; optional `endpoint` (default `DEFAULT_ENDPOINT`, the hosted API), `ingestKey` (default: `AGENTTRACE_INGEST_KEY`), `stateDir`, `fetch`, `onError` |
+| `client.record(decision)` | `{ model, steps, outcome, sources? }` → sign, queue, send in the background; resolves to the `decisionId` |
+| `client.startDecision({ model })` | a recorder with `decisionId`, `source`, `step`, `finish` |
+| `client.submit(draft)` | sign, queue, send in the background what `finish` returned |
+| `client.flush()` | send what is still queued; resolves to `{ sent, pending, stoppedBy? }`. `sent` counts only what this call sent — decisions the background delivery already sent are not in it, so `{ sent: 0, pending: 0 }` means everything is out |
 | `client.pending()` / `client.rejected()` | decisions waiting / refused by the API and set aside |
 | `client.agentPubkey` | the agent's public key — its identity |
 
