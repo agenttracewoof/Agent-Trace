@@ -8,6 +8,7 @@ import {
   resolveApiBaseUrl,
 } from './api'
 import { DecisionPage } from './pages/Decision'
+import { Landing } from './pages/Landing'
 import { VerifyPage } from './pages/Verify'
 
 /**
@@ -51,7 +52,7 @@ export function App() {
           поле, а корінь — це `'/'`, не «нічого». */}
       <BrowserRouter basename={basename === '' ? '/' : basename}>
         <Routes>
-          <Route path="/" element={<Landing />} />
+          <Route path="/" element={<LandingRoute />} />
           <Route path="/verify" element={<VerifyRoute />} />
           <Route path="/decisions/:decisionId" element={<DecisionRoute />} />
           <Route path="*" element={<NotFound />} />
@@ -79,12 +80,11 @@ const Fatal = ({ message }: { message: string }) => (
 )
 
 /**
- * Лендінг питає складання, а не автора: чи задана адреса API. Речення «сторінки
- * рішення тут немає» протухло б того дня, коли зʼявиться хостинг (T060), а
- * речення «рішення читається за посиланням» **уже** неправдиве там, де API не
- * задеплоєний — і читається як зламана сторінка, хоч нічого не зламано.
+ * The landing page asks the build, not its author, whether an API address is
+ * set: without one the decision page cannot work, and the page says so instead
+ * of offering a form that leads nowhere.
  */
-const Landing = () => {
+function LandingRoute() {
   let hasApi = true
   try {
     resolveApiBaseUrl(import.meta.env)
@@ -94,36 +94,7 @@ const Landing = () => {
 
   return (
     <Shell>
-      <h1 className="font-semibold">AgentTrace</h1>
-      <p className="mt-2 text-neutral-600">
-        Cryptographic provenance for AI agent decisions: the agent signs what it decided, the root
-        of that record goes on Solana, and anyone can check the two against each other without
-        trusting us.
-      </p>
-
-      <p className="mt-4">
-        <Link className="underline" to="/verify">
-          Verify an envelope yourself
-        </Link>{' '}
-        <span className="text-neutral-600">
-          — that page reads the chain in your browser and never calls AgentTrace. A real example is
-          bundled with it.
-        </span>
-      </p>
-
-      <p className="mt-4 text-neutral-600">
-        {hasApi ? (
-          <>
-            A single decision is read at <code>/decisions/&lt;id&gt;</code>, no account needed.
-          </>
-        ) : (
-          <>
-            The per-decision page (<code>/decisions/&lt;id&gt;</code>) needs the AgentTrace API,
-            which is not part of this deployment yet — it arrives with hosting in v0.2.0. Nothing
-            above depends on it.
-          </>
-        )}
-      </p>
+      <Landing hasApi={hasApi} />
     </Shell>
   )
 }

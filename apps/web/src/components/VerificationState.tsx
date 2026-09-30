@@ -49,7 +49,7 @@ export function apiDisagreement(
   return `AgentTrace reports this record as tampered${detail === '' ? '' : ` (${detail})`}.`
 }
 
-const TONE: Record<VerificationResult['status'], string> = {
+export const TONE: Record<VerificationResult['status'], string> = {
   verified: 'bg-emerald-100 text-emerald-900',
   pending: 'bg-amber-100 text-amber-900',
   tampered: 'bg-red-100 text-red-900',
