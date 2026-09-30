@@ -2,7 +2,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createDb, decisions } from '@agenttrace/db'
-import { createClient } from '@agenttrace/sdk'
+import { createClient } from '@agenttracewoof/sdk'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { and, count, isNotNull, lte, sql } from 'drizzle-orm'
 import {

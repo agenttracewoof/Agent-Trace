@@ -1,23 +1,60 @@
 {
-  "name": "@agenttrace/sdk",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@agenttracewoof/sdk",
+  "version": "0.1.0",
+  "description": "Record what an AI agent decided and why, sign it, and anchor it on Solana so anyone can check it later.",
+  "license": "MIT",
   "type": "module",
+  "keywords": [
+    "ai-agent",
+    "provenance",
+    "audit",
+    "solana",
+    "signature",
+    "sdk"
+  ],
+  "homepage": "https://github.com/agenttracewoof/Agent-Trace/tree/main/packages/sdk#readme",
+  "bugs": "https://github.com/agenttracewoof/Agent-Trace/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agenttracewoof/Agent-Trace.git",
+    "directory": "packages/sdk"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/sdk/src/index.js",
+    "types": "./dist/sdk/src/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/sdk/src/index.d.ts",
+        "default": "./dist/sdk/src/index.js"
+      }
+    }
+  },
   "scripts": {
+    "build": "node scripts/dist.mjs clean && tsc -p tsconfig.build.json && node scripts/dist.mjs link",
+    "prepack": "pnpm run build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agenttrace/manifest": "workspace:*",
-    "@agenttrace/shared": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@agenttrace/manifest": "workspace:*",
+    "@agenttrace/shared": "workspace:*",
     "@types/node": "26.2.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

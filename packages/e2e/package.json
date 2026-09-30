@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@agenttrace/manifest": "workspace:*",
-    "@agenttrace/sdk": "workspace:*",
+    "@agenttracewoof/sdk": "workspace:*",
     "@agenttrace/verify": "workspace:*"
   },
   "devDependencies": {

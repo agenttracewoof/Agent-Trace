@@ -1,4 +1,4 @@
-import { type DecisionDraft, decisionDraftSchema, type RedactionPolicy } from '@agenttrace/sdk'
+import { type DecisionDraft, decisionDraftSchema, type RedactionPolicy } from '@agenttracewoof/sdk'
 
 /**
  * Дані демо (T070). Власник уточнив 2026-08-14: рішення в демо **мокові** —

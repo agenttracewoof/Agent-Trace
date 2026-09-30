@@ -1,5 +1,5 @@
-import { createClient } from '@agenttrace/sdk'
 import { type ChainSource, collectEvidence, verifyDecision } from '@agenttrace/verify'
+import { createClient } from '@agenttracewoof/sdk'
 import { DEMO_REDACTION_POLICY, generateDecision } from './generator.js'
 
 /**

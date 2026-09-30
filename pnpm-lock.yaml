@@ -201,12 +201,12 @@ importers:
       '@agenttrace/manifest':
         specifier: workspace:*
         version: link:../manifest
-      '@agenttrace/sdk':
-        specifier: workspace:*
-        version: link:../sdk
       '@agenttrace/verify':
         specifier: workspace:*
         version: link:../verify
+      '@agenttracewoof/sdk':
+        specifier: workspace:*
+        version: link:../sdk
     devDependencies:
       '@agenttrace/api':
         specifier: workspace:*
@@ -254,16 +254,16 @@ importers:
 
   packages/sdk:
     dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
       '@agenttrace/manifest':
         specifier: workspace:*
         version: link:../manifest
       '@agenttrace/shared':
         specifier: workspace:*
         version: link:../shared
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0

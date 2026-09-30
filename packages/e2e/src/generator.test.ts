@@ -1,4 +1,4 @@
-import { buildManifest } from '@agenttrace/sdk'
+import { buildManifest } from '@agenttracewoof/sdk'
 import { describe, expect, it } from 'vitest'
 import {
   DEMO_REDACTION_POLICY,
