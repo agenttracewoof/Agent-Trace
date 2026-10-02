@@ -115,11 +115,16 @@ describe('міграція накочується на справжній Postgr
        WHERE table_schema = 'public' ORDER BY table_name`,
     )
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      'accounts',
       'agent_keys',
       'agents',
       'decisions',
+      'members',
       'projects',
+      'sessions',
       'usage_daily',
+      'users',
+      'verifications',
     ])
 
     await insertDecision('44444444-4444-4444-8444-444444444444')
@@ -269,6 +274,87 @@ describe('CHECK-обмеження відхиляють те, заради чо�
   })
 })
 
+describe('users and membership', () => {
+  const OWNER = 'c0000001-0000-4000-8000-000000000001'
+  const LEAVER = 'c0000002-0000-4000-8000-000000000002'
+
+  beforeAll(async () => {
+    await db.query(
+      `INSERT INTO users (id, name, email) VALUES ($1, '', 'owner@example.com'),
+                                                  ($2, '', 'leaver@example.com')`,
+      [OWNER, LEAVER],
+    )
+    await db.query(
+      `INSERT INTO members (project_id, user_id, role) VALUES ($1, $2, 'owner'), ($1, $3, 'operator')`,
+      [PROJECT, OWNER, LEAVER],
+    )
+  })
+
+  it('refuses an address that is not lowercase', async () => {
+    expect(
+      await rejects(`INSERT INTO users (name, email) VALUES ('', 'Someone@example.com')`),
+    ).toBe('23514')
+  })
+
+  it('refuses a second user with the same address', async () => {
+    expect(await rejects(`INSERT INTO users (name, email) VALUES ('', 'owner@example.com')`)).toBe(
+      '23505',
+    )
+  })
+
+  it('refuses to add the same user to a project twice', async () => {
+    expect(
+      await rejects(`INSERT INTO members (project_id, user_id, role) VALUES ($1, $2, 'owner')`, [
+        PROJECT,
+        LEAVER,
+      ]),
+    ).toBe('23505')
+  })
+
+  it('refuses a role it does not know', async () => {
+    expect(await rejects(`UPDATE members SET role = 'admin' WHERE user_id = $1`, [OWNER])).toBe(
+      '22P02',
+    )
+  })
+
+  it('refuses an emergency replacement confirmed by nobody we know', async () => {
+    let code = 'accepted'
+    try {
+      await insertKey('c0000003-0000-4000-8000-000000000003', hex(32, '5e'), 'administrative', {
+        prevKeyId: KEY,
+        rotationProof: hex(64, 'ef'),
+        confirmedBy: 'c0000009-0000-4000-8000-000000000009',
+      })
+    } catch (cause) {
+      code = String((cause as { code?: unknown }).code)
+    }
+    expect(code).toBe('23503')
+  })
+
+  it('keeps the user who confirmed an emergency replacement', async () => {
+    await insertKey('c0000004-0000-4000-8000-000000000004', hex(32, '6f'), 'administrative', {
+      prevKeyId: KEY,
+      rotationProof: hex(64, 'ef'),
+      confirmedBy: OWNER,
+    })
+    expect(await rejects('DELETE FROM users WHERE id = $1', [OWNER])).toBe('23001')
+  })
+
+  it('takes sessions and memberships along with a deleted user', async () => {
+    await db.query(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES ('t', $1, now() + interval '1 day')`,
+      [LEAVER],
+    )
+    await db.query('DELETE FROM users WHERE id = $1', [LEAVER])
+    const left = await db.query<{ sessions: number; members: number }>(
+      `SELECT (SELECT count(*)::int FROM sessions) AS sessions,
+              (SELECT count(*)::int FROM members WHERE user_id = $1) AS members`,
+      [LEAVER],
+    )
+    expect(left.rows[0]).toEqual({ sessions: 0, members: 0 })
+  })
+})
+
 describe('унікальність і зв’язки', () => {
   it('refuses a second agent with the same external id in one project', async () => {
     expect(
@@ -300,8 +386,11 @@ describe('унікальність і зв’язки', () => {
 
   it('drops the whole project when the project goes', async () => {
     await db.query('DELETE FROM projects WHERE id = $1', [PROJECT])
-    const left = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM decisions')
-    expect(left.rows[0]?.n).toBe(0)
+    const left = await db.query<{ decisions: number; members: number }>(
+      `SELECT (SELECT count(*)::int FROM decisions) AS decisions,
+              (SELECT count(*)::int FROM members) AS members`,
+    )
+    expect(left.rows[0]).toEqual({ decisions: 0, members: 0 })
   })
 })
 

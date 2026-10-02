@@ -17,6 +17,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { users } from './auth.js'
 
 /**
  * Схема гарячого сховища. **База одноразова**: усе, крім вмісту манифестів
@@ -140,10 +141,13 @@ export const agentKeys = pgTable(
     /** Підпис із якоря ротації: попереднім ключем (chained) або платником (administrative). */
     rotationProof: hex('rotation_proof', 64),
     /**
-     * Хто підтвердив аварійну заміну у дашборді (FR-027). FK на `users`
-     * зʼявиться разом зі схемою auth — це T037, тут поки просто ідентифікатор.
+     * Who confirmed the emergency replacement in the dashboard (FR-027).
+     * `restrict`, not `set null`: the shape check below needs the name, and
+     * the audit trail must not lose it when an account goes away.
      */
-    confirmedBy: uuid('confirmed_by'),
+    confirmedBy: uuid('confirmed_by').references((): AnyPgColumn => users.id, {
+      onDelete: 'restrict',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

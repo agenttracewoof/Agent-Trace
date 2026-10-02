@@ -1,8 +1,13 @@
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import * as schema from './schema/core.js'
+import * as auth from './schema/auth.js'
+import * as core from './schema/core.js'
 
+export * from './schema/auth.js'
 export * from './schema/core.js'
+
+const schema = { ...core, ...auth }
+
 export { schema }
 
 /**

@@ -10,10 +10,10 @@ export default defineConfig({
   /**
    * Файли перелічені поіменно, а не глобом `*.ts`: глоб затягнув би сюди
    * `*.test.ts`, які drizzle-kit виконує так само, як схему. Ціна — новий файл
-   * схеми треба дописати сюди руками (найближчий — `auth.ts` на T037), і це
-   * дешевше, ніж генератор, який мовчки читає тести.
+   * схеми треба дописати сюди руками, і це дешевше, ніж генератор, який мовчки
+   * читає тести.
    */
-  schema: ['./src/schema/core.ts'],
+  schema: ['./src/schema/core.ts', './src/schema/auth.ts'],
   out: './drizzle',
   dbCredentials: { url: process.env.DATABASE_URL ?? '' },
   strict: true,

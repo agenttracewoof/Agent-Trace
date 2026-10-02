@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
+import { accounts, members, sessions, users, verifications } from './schema/auth.js'
 import { agentKeys, agents, decisions, projects, usageDaily } from './schema/core.js'
 
 /**
@@ -23,9 +24,18 @@ const migrations = readdirSync(dir)
 
 const sql = migrations.map((name) => readFileSync(dir + name, 'utf8')).join('\n')
 
-const tableNames = [projects, agents, agentKeys, decisions, usageDaily].map(
-  (table) => getTableConfig(table).name,
-)
+const tableNames = [
+  projects,
+  agents,
+  agentKeys,
+  decisions,
+  usageDaily,
+  users,
+  sessions,
+  accounts,
+  verifications,
+  members,
+].map((table) => getTableConfig(table).name)
 
 describe('міграції', () => {
   /**
@@ -38,6 +48,7 @@ describe('міграції', () => {
       '0000_init.sql',
       '0001_usage_daily.sql',
       '0002_anchor_in_flight.sql',
+      '0003_auth.sql',
     ])
   })
 
@@ -49,12 +60,20 @@ describe('міграції', () => {
 })
 
 describe('RLS deny-all', () => {
-  it.each(['projects', 'agents', 'agent_keys', 'decisions', 'usage_daily'])(
-    'turns row level security on for %s',
-    (name) => {
-      expect(sql).toContain(`ALTER TABLE "${name}" ENABLE ROW LEVEL SECURITY;`)
-    },
-  )
+  it.each([
+    'projects',
+    'agents',
+    'agent_keys',
+    'decisions',
+    'usage_daily',
+    'users',
+    'sessions',
+    'accounts',
+    'verifications',
+    'members',
+  ])('turns row level security on for %s', (name) => {
+    expect(sql).toContain(`ALTER TABLE "${name}" ENABLE ROW LEVEL SECURITY;`)
+  })
 
   it('creates no policy at all — that is what makes it deny-all', () => {
     // Увімкнений RLS без жодної політики забороняє все всім ролям, які його не
