@@ -7,9 +7,12 @@ import {
   startPublisher,
 } from '@agenttrace/publisher/run'
 import { serve } from '@hono/node-server'
+import { Resend } from 'resend'
 import { createApp } from './app.js'
+import { authRoutes, createAuth } from './auth.js'
 import { createHealthReporter } from './health.js'
 import { createLogger } from './logger.js'
+import { sendSignInCodeWith } from './mailer.js'
 import { agentRoutes } from './routes/agents.js'
 import { decisionRoutes } from './routes/decisions.js'
 import { publicRoutes } from './routes/public.js'
@@ -79,8 +82,8 @@ const rpc = chain
  * і той відкритий усім у самому маршруті: публічне посилання має читатися
  * з чужої сторінки без нашої участі (FR-012, SC-009). Решта маршрутів ходить
  * із ingest-ключем із серверного процесу, якому CORS не заважає й не помагає.
- * Перший справжній випадок — дашборд за сесією (Фаза 3), і origin туди
- * прийде тоді ж, коли й сам дашборд.
+ * Дашборд за сесією має свій CORS — у `auth.ts`, на одному `WEB_ORIGIN`
+ * і лише на маршрутах входу.
  */
 const app = createApp({
   logger,
@@ -100,6 +103,22 @@ app.route('/v1', agentRoutes(db))
 app.route('/v1', decisionRoutes(db, { publicAppUrl: required('PUBLIC_APP_URL') }))
 // Без `ingestAuth` навмисно: посилання на рішення відкривається без ключа (FR-012).
 app.route('/v1', publicRoutes(db))
+
+/**
+ * Required like the database: a dashboard that cannot send a sign-in code is
+ * a login form that answers every operator with a 500.
+ */
+const webOrigin = new URL(required('WEB_ORIGIN')).origin
+const auth = createAuth(db, {
+  secret: required('BETTER_AUTH_SECRET'),
+  baseUrl: required('BETTER_AUTH_URL'),
+  webOrigin,
+  sendCode: sendSignInCodeWith(
+    new Resend(required('RESEND_API_KEY')).emails,
+    required('AUTH_EMAIL_FROM'),
+  ),
+})
+app.route('/v1', authRoutes(auth, { webOrigin }))
 
 /**
  * `PORT` віддає Render, `API_PORT` — наш `.env`. Наше значення сильніше, бо

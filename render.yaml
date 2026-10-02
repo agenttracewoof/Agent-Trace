@@ -75,3 +75,18 @@ services:
 
       - key: LOG_LEVEL
         value: info
+
+      # Вхід у дашборд (FR-018). Сторінка на Pages, API тут — різні сайти,
+      # тому cookie сесії йде з `SameSite=None; Partitioned` (`auth.ts`).
+      - key: WEB_ORIGIN
+        value: https://agenttracewoof.github.io
+      - key: BETTER_AUTH_URL
+        value: https://agenttrace-api-cr1b.onrender.com
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      # Відправник мусить бути на домені, підтвердженому в Resend; до того
+      # коди отримує лише власник акаунта Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: AUTH_EMAIL_FROM
+        sync: false
