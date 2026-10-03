@@ -527,3 +527,125 @@ describe('GET /v1/projects/:projectId/decisions/:decisionId — details (T040, F
     expect((await details()).headers.get('cache-control')).toBe('no-store')
   })
 })
+
+describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)', () => {
+  interface Tenant {
+    readonly cookie: string
+    readonly email: string
+    readonly projectId: string
+    readonly decisionId: string
+  }
+
+  let alice: Tenant
+  let bob: Tenant
+
+  async function tenant(label: string): Promise<Tenant> {
+    const email = `${label}-${randomUUID()}@example.com`
+    const cookie = await signIn(email)
+    const { projectId, ingestKey } = await createProjectWithKey(cookie, `${label}'s project`)
+    const key = await generateAgentKey()
+    await ingest(ingestKey, '/agents', { externalId: label, name: label, publicKey: key.publicKey })
+    const envelope = await signedDecision(key)
+    expect((await ingest(ingestKey, '/decisions', envelope)).status).toBe(200)
+    return { cookie, email, projectId, decisionId: envelope.manifest.decisionId }
+  }
+
+  beforeAll(async () => {
+    await client.query('DELETE FROM projects')
+    alice = await tenant('alice')
+    bob = await tenant('bob')
+  })
+
+  const absentProject = randomUUID()
+  const absentDecision = 'e'.repeat(32)
+
+  /** Every route that names a project, as the dashboard calls it. */
+  const routes = (projectId: string, decisionId: string) =>
+    [
+      ['GET', `/projects/${projectId}/decisions`],
+      ['GET', `/projects/${projectId}/decisions?status=pending&limit=1`],
+      ['GET', `/projects/${projectId}/decisions/${decisionId}`],
+      ['POST', `/projects/${projectId}/ingest-key`],
+    ] as const
+
+  /** The error with the one field that differs on every request taken out. */
+  const errorOf = async (response: Response) => {
+    const body = (await response.json()) as { error: { details: Record<string, unknown> } }
+    const { requestId: _, ...details } = body.error.details
+    return { status: response.status, error: { ...body.error, details } }
+  }
+
+  it("answers Bob on Alice's project exactly as on a project that does not exist", async () => {
+    for (const [index, [method, path]] of routes(alice.projectId, alice.decisionId).entries()) {
+      const foreign = await call(method, path, { cookie: bob.cookie })
+      const [, absentPath] = routes(absentProject, absentDecision)[index] ?? []
+      const absent = await call(method, absentPath ?? '', { cookie: bob.cookie })
+
+      expect(foreign.status, `${method} ${path}`).toBe(404)
+      expect(await errorOf(foreign)).toEqual(await errorOf(absent))
+    }
+  })
+
+  it("does not hand over Alice's decision under Bob's own project", async () => {
+    // Bob is a member of the project in the path; the decision in it is not his.
+    const response = await call('GET', `/projects/${bob.projectId}/decisions/${alice.decisionId}`, {
+      cookie: bob.cookie,
+    })
+    expect(response.status).toBe(404)
+  })
+
+  it("lists only the caller's own decisions, never a neighbour's", async () => {
+    const own = await page(bob.cookie, bob.projectId)
+    expect(own.decisions.map((one) => one.decisionId)).toEqual([bob.decisionId])
+  })
+
+  it('opens the journal to an operator the owner added, and closes it once removed', async () => {
+    const { rows } = await client.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [
+      bob.email,
+    ])
+    const bobId = rows[0]?.id
+    await client.query(
+      "INSERT INTO members (project_id, user_id, role) VALUES ($1, $2, 'operator')",
+      [alice.projectId, bobId],
+    )
+
+    const journalAsOperator = await page(bob.cookie, alice.projectId)
+    expect(journalAsOperator.decisions.map((one) => one.decisionId)).toEqual([alice.decisionId])
+    const detailsAsOperator = await call(
+      'GET',
+      `/projects/${alice.projectId}/decisions/${alice.decisionId}`,
+      { cookie: bob.cookie },
+    )
+    expect(detailsAsOperator.status).toBe(200)
+    // Reading is every member's; replacing the key stays the owner's.
+    expect(
+      (await call('POST', `/projects/${alice.projectId}/ingest-key`, { cookie: bob.cookie }))
+        .status,
+    ).toBe(404)
+
+    await client.query('DELETE FROM members WHERE project_id = $1 AND user_id = $2', [
+      alice.projectId,
+      bobId,
+    ])
+    // No cache between membership and the next request.
+    const afterRemoval = await call('GET', `/projects/${alice.projectId}/decisions`, {
+      cookie: bob.cookie,
+    })
+    expect(afterRemoval.status).toBe(404)
+  })
+
+  it('never answers 403 on any of it', async () => {
+    const statuses: number[] = []
+    for (const caller of [alice, bob]) {
+      for (const target of [alice, bob]) {
+        for (const [method, path] of routes(target.projectId, target.decisionId)) {
+          statuses.push((await call(method, path, { cookie: caller.cookie })).status)
+        }
+      }
+    }
+    expect(statuses).not.toContain(403)
+    // Both kinds of answer took place, so the line above is about something.
+    expect(statuses).toContain(200)
+    expect(statuses).toContain(404)
+  })
+})
