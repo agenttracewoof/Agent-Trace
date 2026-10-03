@@ -17,6 +17,8 @@ export interface Variables {
   requestId: string
   logger: Logger
   project: ProjectContext
+  /** Likewise only behind `sessionAuth` — the dashboard's routes (T078). */
+  userId: string
 }
 
 export interface AppOptions {

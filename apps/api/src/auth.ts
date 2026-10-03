@@ -3,12 +3,16 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { emailOTP } from 'better-auth/plugins'
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { z } from 'zod'
 import type { Variables } from './app.js'
 import { clientAddress, createSendCodeGuard } from './auth-limits.js'
 import { AppError } from './errors.js'
 import { CODE_TTL_MINUTES, type SendSignInCode } from './mailer.js'
+import {
+  dashboardCors,
+  requireDashboardOrigin,
+  type SessionLookup,
+} from './middleware/dashboard.js'
 
 export const AUTH_BASE_PATH = '/v1/auth'
 
@@ -85,6 +89,12 @@ export function createAuth(db: AuthDatabase, config: AuthConfig) {
 
 export type Auth = ReturnType<typeof createAuth>
 
+/** The session behind a request's cookie, as `sessionAuth` asks for it. */
+export const sessionUserOf =
+  (auth: Auth): SessionLookup =>
+  async (headers) =>
+    (await auth.api.getSession({ headers }))?.user.id
+
 /**
  * Only `sign-in`: the other code types belong to password and email-change
  * flows we do not offer, and each of them would be one more way to make us
@@ -114,29 +124,15 @@ export function authRoutes(auth: Auth, options: AuthRoutesOptions) {
 
   // Mounted on `/auth/*`, not `*`: a star here would cover every `/v1` route
   // of every router (see `agents.ts`).
-  router.use(
-    '/auth/*',
-    cors({
-      origin: options.webOrigin,
-      credentials: true,
-      allowMethods: ['GET', 'POST'],
-      allowHeaders: ['Content-Type'],
-    }),
-  )
+  router.use('/auth/*', dashboardCors(options.webOrigin))
 
   /**
-   * The CSRF check `PLAN.md` asks for on cookie sessions. better-auth has its
-   * own, but applies it only to requests that already carry a cookie; the
-   * sign-in routes are called before there is one, and a foreign page must not
-   * be able to spend our email quota either. Every caller of these routes is
-   * the dashboard, and a browser always sends `Origin` on a POST.
+   * better-auth has an origin check of its own, but applies it only to
+   * requests that already carry a cookie; the sign-in routes are called before
+   * there is one, and a foreign page must not be able to spend our email quota
+   * either.
    */
-  router.post('/auth/*', async (c, next) => {
-    if (c.req.header('origin') !== options.webOrigin) {
-      throw new AppError('UNAUTHORIZED', 'Request origin is not allowed')
-    }
-    await next()
-  })
+  router.use('/auth/*', requireDashboardOrigin(options.webOrigin))
 
   router.post('/auth/email-otp/send-verification-otp', async (c) => {
     // A clone: better-auth reads the body itself, and a consumed one is gone.

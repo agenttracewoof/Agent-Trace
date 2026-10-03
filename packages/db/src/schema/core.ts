@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -87,6 +88,13 @@ export const projects = pgTable(
     ingestKeyHash: hex('ingest_key_hash', 32).notNull(),
     hotWindowDays: integer('hot_window_days').notNull().default(14),
     dailyQuota: integer('daily_quota').notNull().default(10_000),
+    /**
+     * Created by a stranger from the dashboard rather than by us from the
+     * console. The flag, not membership, decides which quotas count against
+     * the shared self-serve budget (T078): our own demo project gains an owner
+     * the day it is attached to an account, and must not swallow that budget.
+     */
+    selfServe: boolean('self_serve').notNull().default(false),
     /** Куди вивантажувати перед витісненням (FR-028). Порожньо — витіснення заборонене. */
     archiveBucket: text('archive_bucket'),
     archivePrefix: text('archive_prefix'),

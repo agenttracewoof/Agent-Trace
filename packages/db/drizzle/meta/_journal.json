@@ -29,6 +29,13 @@
       "when": 1790933830622,
       "tag": "0003_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791029746429,
+      "tag": "0004_self_serve",
+      "breakpoints": true
     }
   ]
 }

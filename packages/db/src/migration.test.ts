@@ -49,6 +49,7 @@ describe('міграції', () => {
       '0001_usage_daily.sql',
       '0002_anchor_in_flight.sql',
       '0003_auth.sql',
+      '0004_self_serve.sql',
     ])
   })
 

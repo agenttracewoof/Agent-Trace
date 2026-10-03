@@ -9,12 +9,13 @@ import {
 import { serve } from '@hono/node-server'
 import { Resend } from 'resend'
 import { createApp } from './app.js'
-import { authRoutes, createAuth } from './auth.js'
+import { authRoutes, createAuth, sessionUserOf } from './auth.js'
 import { createHealthReporter } from './health.js'
 import { createLogger } from './logger.js'
 import { sendSignInCodeWith } from './mailer.js'
 import { agentRoutes } from './routes/agents.js'
 import { decisionRoutes } from './routes/decisions.js'
+import { projectRoutes } from './routes/projects.js'
 import { publicRoutes } from './routes/public.js'
 
 const logger = createLogger()
@@ -82,8 +83,8 @@ const rpc = chain
  * і той відкритий усім у самому маршруті: публічне посилання має читатися
  * з чужої сторінки без нашої участі (FR-012, SC-009). Решта маршрутів ходить
  * із ingest-ключем із серверного процесу, якому CORS не заважає й не помагає.
- * Дашборд за сесією має свій CORS — у `auth.ts`, на одному `WEB_ORIGIN`
- * і лише на маршрутах входу.
+ * Дашборд за сесією має свій CORS — `middleware/dashboard.ts`, на одному
+ * `WEB_ORIGIN` і лише на маршрутах входу та проєктів.
  */
 const app = createApp({
   logger,
@@ -119,6 +120,7 @@ const auth = createAuth(db, {
   ),
 })
 app.route('/v1', authRoutes(auth, { webOrigin }))
+app.route('/v1', projectRoutes(db, { webOrigin, sessionUser: sessionUserOf(auth) }))
 
 /**
  * `PORT` віддає Render, `API_PORT` — наш `.env`. Наше значення сильніше, бо
