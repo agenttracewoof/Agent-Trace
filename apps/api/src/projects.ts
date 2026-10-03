@@ -195,3 +195,20 @@ export async function reissueIngestKey<
 
   return updated === undefined ? undefined : ingestKey
 }
+
+/**
+ * Whether the user may read this project, in either role. `false` for a
+ * project that is foreign and for one that does not exist alike, so the
+ * caller answers 404 to both (`errors.ts`, T041).
+ */
+export async function isMemberOf<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(db: Db<TQueryResult, TFullSchema>, userId: string, projectId: string): Promise<boolean> {
+  const [member] = await db
+    .select({ projectId: members.projectId })
+    .from(members)
+    .where(and(eq(members.projectId, projectId), eq(members.userId, userId)))
+    .limit(1)
+  return member !== undefined
+}

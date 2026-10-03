@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+export * from './dashboard.js'
 export * from './ingest.js'
 export * from './projects.js'
 export * from './public.js'

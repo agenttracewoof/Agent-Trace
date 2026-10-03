@@ -10,6 +10,7 @@ import { cors } from 'hono/cors'
 import { z } from 'zod'
 import type { Variables } from '../app.js'
 import { asUuid } from '../decision-id.js'
+import { anchorOf } from '../decision-view.js'
 import { AppError } from '../errors.js'
 
 /**
@@ -91,15 +92,6 @@ function envelopeOf(row: DecisionRow, decisionId: string): unknown {
     signature: row.signature,
   }
 }
-
-const anchorOf = (row: DecisionRow): PublicDecisionResponse['anchor'] =>
-  row.anchorSignature === null || row.anchorSlot === null || row.anchoredAt === null
-    ? null
-    : {
-        transactionSignature: row.anchorSignature,
-        slot: row.anchorSlot,
-        anchoredAt: row.anchoredAt.toISOString(),
-      }
 
 const archiveOf = (row: DecisionRow): PublicDecisionResponse['archive'] =>
   row.archiveUrl === null || row.archivedAt === null

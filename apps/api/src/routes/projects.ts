@@ -24,6 +24,7 @@ import {
   projectsOf,
   reissueIngestKey,
 } from '../projects.js'
+import { dashboardRoutes } from './dashboard.js'
 
 type Db<
   TQueryResult extends PgQueryResultHKT,
@@ -61,6 +62,8 @@ export function projectRoutes<
   // `/projects/*` covers `/projects` itself and nothing beside it.
   router.use('/projects/*', dashboardCors(options.webOrigin))
   router.use('/projects/*', requireDashboardOrigin(options.webOrigin))
+  // The journal lives under `/projects/:projectId` and relies on the two guards above.
+  router.route('/', dashboardRoutes(db, { sessionUser: options.sessionUser }))
 
   router.get('/projects', session, async (c) => {
     const body: ListProjectsResponse = {
