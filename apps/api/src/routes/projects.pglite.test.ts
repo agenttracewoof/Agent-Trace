@@ -1,11 +1,11 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { PGlite } from '@electric-sql/pglite'
 import {
   createProjectResponseSchema,
   listProjectsResponseSchema,
   reissueIngestKeyResponseSchema,
 } from '@agenttrace/shared'
+import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
