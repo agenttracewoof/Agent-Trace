@@ -12,8 +12,10 @@ Node 22 or newer. ESM only.
 npm install @agenttracewoof/sdk
 ```
 
-You also need an **ingest key** for your project. Self-service sign-up is not there
-yet: ask the AgentTrace operator for one, and put it in the environment as
+You also need an **ingest key** for your project. Sign in at
+[agenttracewoof.github.io/Agent-Trace](https://agenttracewoof.github.io/Agent-Trace/)
+and create a project once self-service sign-up is open there; until then, ask the
+AgentTrace operator for one. Put it in the environment as
 `AGENTTRACE_INGEST_KEY` (a `.env` file loaded by `dotenv` is fine). The client reads it
 from there; without it, `createClient` throws at start instead of failing later.
 

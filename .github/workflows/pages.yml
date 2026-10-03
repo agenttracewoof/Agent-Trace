@@ -50,6 +50,10 @@ jobs:
           # Заводиться в Settings → Secrets and variables → **Actions** →
           # Variables (не Environments), і збірка після цього перезапускається.
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Кнопка «Get an ingest key» на головній (T075). Лише рядок `true`
+          # її вмикає — ставити, коли домен відправника підтверджено в Resend:
+          # до того код входу доходить тільки власнику акаунта Resend.
+          VITE_SIGNUP_OPEN: ${{ vars.VITE_SIGNUP_OPEN }}
         run: pnpm exec vite build
 
       # У Pages немає rewrite'ів, тож глибоке посилання віддає 404. Копія

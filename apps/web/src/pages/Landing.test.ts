@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { decisionIdFrom } from './Landing'
+import { decisionIdFrom, isSignupOpen, SDK_EXAMPLE } from './Landing'
 
 const ID = '0123456789abcdef0123456789abcdef'
 
@@ -23,5 +25,24 @@ describe('decisionIdFrom', () => {
     expect(decisionIdFrom(`${ID}0`)).toBeUndefined()
     expect(decisionIdFrom(`https://example.com/decisions/${ID}0`)).toBeUndefined()
     expect(decisionIdFrom(`https://example.com/agents/${ID}`)).toBeUndefined()
+  })
+})
+
+describe('isSignupOpen', () => {
+  it('opens only on the exact switch, so a typo keeps the door shut', () => {
+    expect(isSignupOpen({ VITE_SIGNUP_OPEN: 'true' })).toBe(true)
+    for (const value of [undefined, '', 'false', 'TRUE', '1', true]) {
+      expect(isSignupOpen({ VITE_SIGNUP_OPEN: value })).toBe(false)
+    }
+  })
+})
+
+describe('SDK_EXAMPLE', () => {
+  it('is the example the SDK README gives, word for word', () => {
+    const readme = readFileSync(
+      fileURLToPath(new URL('../../../../packages/sdk/README.md', import.meta.url)),
+      'utf8',
+    ).replace(/\r\n/g, '\n')
+    expect(readme).toContain(SDK_EXAMPLE)
   })
 })

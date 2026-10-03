@@ -14,7 +14,7 @@ import {
   sessionQueryKey,
 } from './dashboard'
 import { DecisionPage } from './pages/Decision'
-import { Landing } from './pages/Landing'
+import { isSignupOpen, Landing } from './pages/Landing'
 import { Projects } from './pages/Projects'
 import { SignIn } from './pages/SignIn'
 import { VerifyPage } from './pages/Verify'
@@ -104,7 +104,7 @@ function LandingRoute() {
 
   return (
     <Shell>
-      <Landing hasApi={hasApi} />
+      <Landing hasApi={hasApi} signupOpen={isSignupOpen(import.meta.env)} />
     </Shell>
   )
 }
