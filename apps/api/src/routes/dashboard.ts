@@ -1,5 +1,7 @@
-import { agents, decisions } from '@agenttrace/db'
+import { agentKeys, agents, decisions } from '@agenttrace/db'
+import { hexDigest } from '@agenttrace/manifest'
 import {
+  type DecisionDetailsResponse,
   JOURNAL_PAGE_DEFAULT,
   type JournalEntry,
   type JournalResponse,
@@ -12,7 +14,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import type { Variables } from '../app.js'
 import { asDecisionId, asUuid } from '../decision-id.js'
-import { anchorOf } from '../decision-view.js'
+import { anchorOf, decisionViewColumns, presentDecision } from '../decision-view.js'
 import { AppError } from '../errors.js'
 import { decodeJournalCursor, encodeJournalCursor } from '../journal-cursor.js'
 import { type SessionLookup, sessionAuth } from '../middleware/dashboard.js'
@@ -33,9 +35,11 @@ const throwOnInvalid = (result: { success: boolean; error?: unknown }): void => 
 }
 
 const projectIdSchema = z.uuid()
+const decisionIdSchema = hexDigest(16)
 
 /**
- * The operator's reading of a project: its decisions (FR-016, T039). Every
+ * The operator's reading of a project: its decisions (FR-016, T039) and each
+ * one in full (FR-017, T040). Every
  * route sits under `/projects/:projectId`, so the one question that decides
  * access — is this user a member of that project — is asked in one place, and
  * a foreign project answers exactly what an absent one does: 404 (T041).
@@ -143,6 +147,41 @@ export function dashboardRoutes<
       return c.json(body)
     },
   )
+
+  router.get('/projects/:projectId/decisions/:decisionId', session, async (c) => {
+    const projectId = await memberProject(c.get('userId'), c.req.param('projectId'))
+    // The public 32-hex form, the one the journal and the link give. A malformed
+    // id names no decision: 404, as for a project id that is not a uuid.
+    const decisionId = decisionIdSchema.safeParse(c.req.param('decisionId'))
+    if (!decisionId.success) throw new AppError('NOT_FOUND', 'Decision not found')
+
+    const [row] = await db
+      .select({
+        ...decisionViewColumns,
+        agentId: agents.id,
+        agentExternalId: agents.externalId,
+        agentName: agents.name,
+        status: decisions.status,
+        receivedAt: decisions.receivedAt,
+      })
+      .from(decisions)
+      .innerJoin(agentKeys, eq(agentKeys.id, decisions.agentKeyId))
+      .innerJoin(agents, eq(agents.id, decisions.agentId))
+      // The project in the condition, not only in the membership check: a member
+      // of project A asking for B's decision under A's path must find nothing.
+      .where(and(eq(decisions.id, asUuid(decisionId.data)), eq(decisions.projectId, projectId)))
+      .limit(1)
+    if (row === undefined) throw new AppError('NOT_FOUND', 'Decision not found')
+
+    const body: DecisionDetailsResponse = {
+      ...(await presentDecision(row, decisionId.data)),
+      agent: { id: row.agentId, externalId: row.agentExternalId, name: row.agentName },
+      status: row.status,
+      receivedAt: row.receivedAt.toISOString(),
+    }
+    c.header('Cache-Control', 'no-store')
+    return c.json(body)
+  })
 
   return router
 }

@@ -2,9 +2,22 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
+  type AgentKeyPair,
+  generateAgentKey,
+  hashValue,
+  MANIFEST_VERSION,
+  type Manifest,
+  type SignedManifest,
+  signManifest,
+  stepsRoot,
+  toHex,
+} from '@agenttrace/manifest'
+import {
   createProjectResponseSchema,
+  decisionDetailsResponseSchema,
   type JournalResponse,
   journalResponseSchema,
+  publicDecisionResponseSchema,
 } from '@agenttrace/shared'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
@@ -12,9 +25,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import { authRoutes, createAuth, sessionUserOf } from '../auth.js'
 import { createSendCodeGuard, DEFAULT_SEND_CODE_LIMITS } from '../auth-limits.js'
-import { asDecisionId } from '../decision-id.js'
+import { asDecisionId, asUuid } from '../decision-id.js'
 import { silentLogger } from '../logger.js'
+import { agentRoutes } from './agents.js'
+import { decisionRoutes } from './decisions.js'
 import { projectRoutes } from './projects.js'
+import { publicRoutes } from './public.js'
 
 /**
  * The journal against the real migration and a real sign-in, mounted the way
@@ -64,6 +80,11 @@ beforeAll(async () => {
     }),
   )
   app.route('/v1', projectRoutes(db, { webOrigin: WEB, sessionUser: sessionUserOf(auth) }))
+  // Ingest and the public read beside them, as in `index.ts`: details are checked
+  // on decisions that came in signed, and against what the public read says.
+  app.route('/v1', agentRoutes(db))
+  app.route('/v1', decisionRoutes(db, { publicAppUrl: 'https://trace.example' }))
+  app.route('/v1', publicRoutes(db))
 }, 60_000)
 
 afterAll(async () => {
@@ -99,11 +120,15 @@ async function signIn(email: string): Promise<string> {
   )
 }
 
-async function createProject(cookie: string, name: string): Promise<string> {
+async function createProjectWithKey(cookie: string, name: string) {
   const response = await call('POST', '/projects', { cookie, body: { name } })
   expect(response.status).toBe(201)
-  return createProjectResponseSchema.parse(await response.json()).project.id
+  const created = createProjectResponseSchema.parse(await response.json())
+  return { projectId: created.project.id, ingestKey: created.ingestKey }
 }
+
+const createProject = async (cookie: string, name: string): Promise<string> =>
+  (await createProjectWithKey(cookie, name)).projectId
 
 const hex = (bytes: number) => randomBytes(bytes).toString('hex')
 
@@ -333,5 +358,172 @@ describe('GET /v1/projects/:projectId/decisions — the journal (T039, FR-016)',
 
     const { response } = await journal(cookie, projectId)
     expect(response.headers.get('access-control-allow-origin')).toBe(WEB)
+  })
+})
+
+const PRIVATE_CONTENT = 'client-position-size-4200'
+
+/** As the SDK sends it: no `Origin`, no cookie, the ingest key in the header. */
+const ingest = (ingestKey: string, path: string, body: unknown) =>
+  app.request(`${API}/v1${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ingestKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+/** One public and one private step; the private one's content never leaves this function. */
+async function signedDecision(key: AgentKeyPair): Promise<SignedManifest> {
+  const input = { question: 'rebalance?' }
+  const output = { answer: 'yes' }
+  const steps: Manifest['steps'] = [
+    {
+      type: 'source.read',
+      private: false,
+      input,
+      output,
+      inputHash: toHex(await hashValue(input)),
+      outputHash: toHex(await hashValue(output)),
+    },
+    {
+      type: 'portfolio.size',
+      private: true,
+      inputHash: toHex(await hashValue({ holdings: PRIVATE_CONTENT })),
+      outputHash: toHex(await hashValue({ size: PRIVATE_CONTENT })),
+    },
+  ]
+  return signManifest(
+    {
+      version: MANIFEST_VERSION,
+      agentPubkey: key.publicKey,
+      decisionId: randomUUID().replaceAll('-', ''),
+      model: 'claude-opus-5',
+      sources: ['https://quotes.example/'],
+      root: toHex(await stepsRoot(steps)),
+      decidedAt: T0,
+      outcome: { action: 'hold' },
+      steps,
+    },
+    key,
+  )
+}
+
+describe('GET /v1/projects/:projectId/decisions/:decisionId — details (T040, FR-017)', () => {
+  let cookie: string
+  let projectId: string
+  let envelope: SignedManifest
+  let decisionId: string
+  let agentId: string
+
+  beforeAll(async () => {
+    const key = await generateAgentKey()
+    await client.query('DELETE FROM projects')
+    cookie = await signIn(`details-${randomUUID()}@example.com`)
+    const project = await createProjectWithKey(cookie, 'Details')
+    projectId = project.projectId
+
+    const registered = await ingest(project.ingestKey, '/agents', {
+      externalId: 'rebalancer-7',
+      name: 'Portfolio rebalancer',
+      publicKey: key.publicKey,
+    })
+    expect(registered.status).toBe(200)
+    agentId = ((await registered.json()) as { agentId: string }).agentId
+
+    envelope = await signedDecision(key)
+    decisionId = envelope.manifest.decisionId
+    expect((await ingest(project.ingestKey, '/decisions', envelope)).status).toBe(200)
+  })
+
+  const details = (id = decisionId, session = cookie) =>
+    call('GET', `/projects/${projectId}/decisions/${id}`, { cookie: session })
+
+  const detailsOk = async () => {
+    const response = await details()
+    expect(response.status).toBe(200)
+    return decisionDetailsResponseSchema.parse(await response.json())
+  }
+
+  /** What anyone gets for the same decision, with no session at all. */
+  const publicRead = async () =>
+    publicDecisionResponseSchema.parse(
+      await (await app.request(`${API}/v1/public/decisions/${decisionId}`)).json(),
+    )
+
+  it('gives the envelope as signed, the agent, and where anchoring stands', async () => {
+    const body = await detailsOk()
+
+    expect(body.signedManifest).toEqual(envelope)
+    expect(body.decisionId).toBe(decisionId)
+    expect(body.agent).toEqual({
+      id: agentId,
+      externalId: 'rebalancer-7',
+      name: 'Portfolio rebalancer',
+    })
+    expect(body.status).toBe('pending')
+    expect(body.anchor).toBeNull()
+    expect(Number.isNaN(Date.parse(body.receivedAt))).toBe(false)
+  })
+
+  it('shows a private step by its hashes and type only — its content is stored nowhere', async () => {
+    const response = await details()
+    const text = await response.text()
+
+    expect(text).not.toContain(PRIVATE_CONTENT)
+    const body = decisionDetailsResponseSchema.parse(JSON.parse(text))
+    expect(body.signedManifest?.manifest.steps[1]).toEqual(envelope.manifest.steps[1])
+    expect(Object.keys(body.signedManifest?.manifest.steps[1] ?? {}).sort()).toEqual([
+      'inputHash',
+      'outputHash',
+      'private',
+      'type',
+    ])
+  })
+
+  it('reaches the same verdict as the public read, whatever the stored row says', async () => {
+    const honest = await detailsOk()
+    expect(honest.verification).toEqual((await publicRead()).verification)
+    expect(honest.verification).toMatchObject({ status: 'pending', includesChain: false })
+
+    await client.query(
+      `UPDATE decisions SET status = 'anchored', anchor_signature = 'sigFromDevnet',
+         anchor_slot = 312, anchored_at = now() WHERE id = $1`,
+      [asUuid(decisionId)],
+    )
+    const anchored = await detailsOk()
+    expect(anchored.status).toBe('anchored')
+    expect(anchored.anchor).toEqual((await publicRead()).anchor)
+    expect(anchored.anchor?.transactionSignature).toBe('sigFromDevnet')
+
+    // Someone with database access rewrites the outcome after the fact.
+    await client.query(`UPDATE decisions SET outcome = '{"action":"sell"}' WHERE id = $1`, [
+      asUuid(decisionId),
+    ])
+    const tampered = await detailsOk()
+    expect(tampered.verification.status).toBe('tampered')
+    expect(tampered.verification).toEqual((await publicRead()).verification)
+
+    await client.query('UPDATE decisions SET content_deleted_at = now() WHERE id = $1', [
+      asUuid(decisionId),
+    ])
+    const deleted = await detailsOk()
+    expect(deleted.verification.status).toBe('content-deleted')
+    expect(deleted.signedManifest).toBeNull()
+    expect(deleted.contentDeletedAt).not.toBeNull()
+  })
+
+  it.each([
+    ['an id of no decision', 'f'.repeat(32)],
+    ['an id that is not 32 hex', 'not-a-decision'],
+    ['the uuid form of the id', '00000000-0000-4000-8000-000000000000'],
+  ])('answers 404 to %s', async (_, id) => {
+    const response = await details(id)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: { code: 'NOT_FOUND' } })
+  })
+
+  it('answers 401 without a session and is not cached', async () => {
+    const anonymous = await call('GET', `/projects/${projectId}/decisions/${decisionId}`)
+    expect(anonymous.status).toBe(401)
+    expect((await details()).headers.get('cache-control')).toBe('no-store')
   })
 })

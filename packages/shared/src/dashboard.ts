@@ -1,7 +1,7 @@
 import { hexDigest } from '@agenttrace/manifest'
 import { z } from 'zod'
 import { decisionStatusSchema } from './ingest.js'
-import { anchorReferenceSchema } from './public.js'
+import { anchorReferenceSchema, publicDecisionResponseSchema } from './public.js'
 
 /**
  * The dashboard's view of a project's decisions (FR-016, T039). Same rule as
@@ -66,7 +66,24 @@ export const journalResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 })
 
+/**
+ * One decision as its operator sees it (FR-017, T040): everything the public
+ * read gives, worked out by the same code, plus what only a member may know —
+ * which of their agents decided, and where anchoring stands.
+ *
+ * "The steps they may see" are every stored step: no role sees less than
+ * another, and the content of a private step is not stored anywhere — the
+ * format has no field for it, so `signedManifest` carries its hashes and type
+ * alone. Showing it to the operator is T052/T053's to add.
+ */
+export const decisionDetailsResponseSchema = publicDecisionResponseSchema.extend({
+  agent: journalAgentSchema,
+  status: decisionStatusSchema,
+  receivedAt: z.iso.datetime(),
+})
+
 export type JournalQuery = z.infer<typeof journalQuerySchema>
 export type JournalAgent = z.infer<typeof journalAgentSchema>
 export type JournalEntry = z.infer<typeof journalEntrySchema>
 export type JournalResponse = z.infer<typeof journalResponseSchema>
+export type DecisionDetailsResponse = z.infer<typeof decisionDetailsResponseSchema>
