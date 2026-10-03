@@ -7,6 +7,7 @@ import { createApp } from './app.js'
 import { authRoutes, createAuth, isCrossSite } from './auth.js'
 import { createSendCodeGuard, DEFAULT_SEND_CODE_LIMITS } from './auth-limits.js'
 import { silentLogger } from './logger.js'
+import { EmailNotSent } from './mailer.js'
 
 /**
  * The whole sign-in runs against the real migration: better-auth writes
@@ -38,7 +39,9 @@ afterAll(async () => {
   await client?.close()
 })
 
-function build(options: { baseUrl?: string; webOrigin?: string; perDay?: number } = {}) {
+function build(
+  options: { baseUrl?: string; webOrigin?: string; perDay?: number; mailFails?: boolean } = {},
+) {
   const baseUrl = options.baseUrl ?? API
   const webOrigin = options.webOrigin ?? WEB
   const auth = createAuth(db, {
@@ -46,6 +49,7 @@ function build(options: { baseUrl?: string; webOrigin?: string; perDay?: number 
     baseUrl,
     webOrigin,
     sendCode: async (to, code) => {
+      if (options.mailFails === true) throw new EmailNotSent('validation_error')
       outbox.push({ to, code })
     },
   })
@@ -120,6 +124,18 @@ describe('sign-in by email code', () => {
     })
     const body = (await session.json()) as { user?: { email?: string } } | null
     expect(body?.user?.email).toBe('new@example.com')
+  })
+
+  it('says so when the provider refuses to send, instead of "a code is on its way"', async () => {
+    const response = await post(build({ mailFails: true }), '/email-otp/send-verification-otp', {
+      email: 'refused@example.com',
+      type: 'sign-in',
+    })
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'INTERNAL', message: 'A sign-in code could not be sent to this address' },
+    })
   })
 
   it('refuses a wrong code and burns the real one after three tries', async () => {

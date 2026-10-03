@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { accounts, sessions, users, verifications } from '@agenttrace/db'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
@@ -42,6 +43,15 @@ export function isCrossSite(baseUrl: string, webOrigin: string): boolean {
   return new URL(baseUrl).hostname !== new URL(webOrigin).hostname
 }
 
+/**
+ * better-auth awaits the mailer but catches what it throws, logs it and still
+ * answers `200 {"success":true}` — so an address our provider refuses (any
+ * stranger's, until the domain is verified in Resend) would be told a code is
+ * on its way. This side channel carries the failure from inside the library
+ * back to `authRoutes`, scoped to the one request that sent the code.
+ */
+const sendAttempt = new AsyncLocalStorage<{ failed: boolean }>()
+
 /** Whatever drizzle database the adapter accepts: postgres-js in production, PGlite in tests. */
 type AuthDatabase = Parameters<typeof drizzleAdapter>[0]
 
@@ -81,7 +91,15 @@ export function createAuth(db: AuthDatabase, config: AuthConfig) {
         allowedAttempts: 3,
         // A database read must not hand out working codes.
         storeOTP: 'hashed',
-        sendVerificationOTP: ({ email, otp }) => config.sendCode(email, otp),
+        sendVerificationOTP: async ({ email, otp }) => {
+          try {
+            await config.sendCode(email, otp)
+          } catch (cause) {
+            const attempt = sendAttempt.getStore()
+            if (attempt !== undefined) attempt.failed = true
+            throw cause
+          }
+        },
       }),
     ],
   })
@@ -155,7 +173,12 @@ export function authRoutes(auth: Auth, options: AuthRoutesOptions) {
       })
     }
 
-    return handle(c.req.raw)
+    const attempt = { failed: false }
+    const response = await sendAttempt.run(attempt, () => handle(c.req.raw))
+    if (attempt.failed) {
+      throw new AppError('INTERNAL', 'A sign-in code could not be sent to this address')
+    }
+    return response
   })
   router.post('/auth/sign-in/email-otp', (c) => handle(c.req.raw))
   router.get('/auth/get-session', (c) => handle(c.req.raw))
