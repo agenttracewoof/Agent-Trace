@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router-dom'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import {
   ApiNotConfigured,
   createPublicApi,
@@ -7,8 +7,16 @@ import {
   type PublicApi,
   resolveApiBaseUrl,
 } from './api'
+import {
+  createDashboardApi,
+  type DashboardApi,
+  retryUnreachable,
+  sessionQueryKey,
+} from './dashboard'
 import { DecisionPage } from './pages/Decision'
 import { Landing } from './pages/Landing'
+import { Projects } from './pages/Projects'
+import { SignIn } from './pages/SignIn'
 import { VerifyPage } from './pages/Verify'
 
 /**
@@ -55,6 +63,8 @@ export function App() {
           <Route path="/" element={<LandingRoute />} />
           <Route path="/verify" element={<VerifyRoute />} />
           <Route path="/decisions/:decisionId" element={<DecisionRoute />} />
+          <Route path="/sign-in" element={<DashboardRoute screen="sign-in" />} />
+          <Route path="/projects" element={<DashboardRoute screen="projects" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
@@ -140,3 +150,50 @@ const VerifyRoute = () => (
     <VerifyPage />
   </Shell>
 )
+
+/**
+ * The operator's screens (T079). Both ask the API who is signed in and send
+ * the visitor to the other screen when it is the wrong one: signed out on
+ * `/projects` goes to sign in, signed in on `/sign-in` goes to the projects.
+ */
+function DashboardRoute({ screen }: { screen: 'sign-in' | 'projects' }) {
+  let api: DashboardApi
+  try {
+    api = createDashboardApi({ baseUrl: resolveApiBaseUrl(import.meta.env) })
+  } catch (cause) {
+    if (!(cause instanceof ApiNotConfigured)) throw cause
+    return <Fatal message={cause.message} />
+  }
+
+  return (
+    <Shell>
+      <DashboardScreen api={api} screen={screen} />
+    </Shell>
+  )
+}
+
+function DashboardScreen({ api, screen }: { api: DashboardApi; screen: 'sign-in' | 'projects' }) {
+  const session = useQuery({
+    queryKey: sessionQueryKey,
+    queryFn: () => api.session(),
+    retry: retryUnreachable,
+  })
+
+  if (session.isPending) return <p className="text-neutral-600">Loading…</p>
+  if (session.isError) {
+    return (
+      <p className="text-red-800" role="alert">
+        {session.error.message}
+      </p>
+    )
+  }
+
+  if (screen === 'projects') {
+    return session.data === null ? (
+      <Navigate replace to="/sign-in" />
+    ) : (
+      <Projects api={api} email={session.data.user.email} />
+    )
+  }
+  return session.data === null ? <SignIn api={api} /> : <Navigate replace to="/projects" />
+}
