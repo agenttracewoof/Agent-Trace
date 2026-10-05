@@ -46,6 +46,28 @@ export const journalAgentSchema = z.object({
   name: z.string(),
 })
 
+/**
+ * The agents of a project, for the journal's filter (T042). Every registered
+ * agent, not only those with a decision on the loaded pages: a filter built
+ * from the pages would leave out an agent whose last decision is older than
+ * the first page, and say nothing about it.
+ *
+ * Agents register through an ingest key and nothing bounds how many, so the
+ * list stops at `PROJECT_AGENTS_MAX` and says when it did.
+ */
+export const PROJECT_AGENTS_MAX = 500
+
+export const projectAgentSchema = journalAgentSchema.extend({
+  createdAt: z.iso.datetime(),
+})
+
+export const projectAgentsResponseSchema = z.object({
+  /** By name, then by id — a stable order for a list a person picks from. */
+  agents: z.array(projectAgentSchema),
+  /** `true` when the project has more agents than the list carries. */
+  truncated: z.boolean(),
+})
+
 export const journalEntrySchema = z.object({
   /** The 32-hex form, the same one the public link and the chain carry. */
   decisionId: hexDigest(16),
@@ -84,6 +106,8 @@ export const decisionDetailsResponseSchema = publicDecisionResponseSchema.extend
 
 export type JournalQuery = z.infer<typeof journalQuerySchema>
 export type JournalAgent = z.infer<typeof journalAgentSchema>
+export type ProjectAgent = z.infer<typeof projectAgentSchema>
+export type ProjectAgentsResponse = z.infer<typeof projectAgentsResponseSchema>
 export type JournalEntry = z.infer<typeof journalEntrySchema>
 export type JournalResponse = z.infer<typeof journalResponseSchema>
 export type DecisionDetailsResponse = z.infer<typeof decisionDetailsResponseSchema>

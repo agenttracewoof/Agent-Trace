@@ -4,6 +4,7 @@ import {
   DashboardError,
   envLine,
   isSignedOut,
+  journalSearch,
   refusalMessage,
   retryUnreachable,
 } from './dashboard'
@@ -153,5 +154,51 @@ describe('retry and session helpers', () => {
 
   it('puts the key under the name the SDK reads', () => {
     expect(envLine(KEY)).toBe(`AGENTTRACE_INGEST_KEY=${KEY}`)
+  })
+})
+
+describe("the journal's calls (T042)", () => {
+  it("asks for the project's agents under the project", async () => {
+    const agent = {
+      id: '0b8e7f2a-5d1c-4e3b-9a6f-1c2d3e4f5a6b',
+      externalId: 'support-bot',
+      name: 'Support bot',
+      createdAt: '2026-10-03T12:00:00.000Z',
+    }
+    const { seen, fetch } = fakeFetch(200, { agents: [agent], truncated: false })
+    const body = await createDashboardApi({ baseUrl: BASE, fetch }).agents(PROJECT.id)
+
+    expect(seen[0]?.url).toBe(`${BASE}/v1/projects/${PROJECT.id}/agents`)
+    expect(seen[0]?.init.credentials).toBe('include')
+    expect(body.agents).toEqual([agent])
+  })
+
+  it('sends only the filters that are set, the cursor as given', async () => {
+    const { seen, fetch } = fakeFetch(200, { decisions: [], nextCursor: null })
+    await createDashboardApi({ baseUrl: BASE, fetch }).journal(PROJECT.id, {
+      status: 'failed',
+      from: 0,
+      cursor: 'MTc1OTY2:ab+/=',
+    })
+
+    const url = new URL(seen[0]?.url ?? '')
+    expect(url.pathname).toBe(`/v1/projects/${PROJECT.id}/decisions`)
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      status: 'failed',
+      from: '0',
+      cursor: 'MTc1OTY2:ab+/=',
+    })
+  })
+
+  it('has no query string when nothing filters', () => {
+    expect(journalSearch({})).toBe('')
+  })
+
+  it('refuses a journal answer it does not know', async () => {
+    const { fetch } = fakeFetch(200, { decisions: 'none' })
+    const error = await refusal(
+      createDashboardApi({ baseUrl: BASE, fetch }).journal(PROJECT.id, {}),
+    )
+    expect(error.message).toBe('The service answered in a shape this page does not know.')
   })
 })

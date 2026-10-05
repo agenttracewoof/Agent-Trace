@@ -17,6 +17,8 @@ import {
   decisionDetailsResponseSchema,
   type JournalResponse,
   journalResponseSchema,
+  PROJECT_AGENTS_MAX,
+  projectAgentsResponseSchema,
   publicDecisionResponseSchema,
 } from '@agenttrace/shared'
 import { PGlite } from '@electric-sql/pglite'
@@ -361,6 +363,66 @@ describe('GET /v1/projects/:projectId/decisions — the journal (T039, FR-016)',
   })
 })
 
+describe("GET /v1/projects/:projectId/agents — the journal's filter (T042)", () => {
+  let cookie: string
+  let projectId: string
+
+  beforeEach(async () => {
+    await client.query('DELETE FROM projects')
+    cookie = await signIn(`agents-${randomUUID()}@example.com`)
+    projectId = await createProject(cookie, 'Agents')
+  })
+
+  const agentsOf = async (projectIdToRead: string) => {
+    const response = await call('GET', `/projects/${projectIdToRead}/agents`, { cookie })
+    expect(response.status).toBe(200)
+    return projectAgentsResponseSchema.parse(await response.json())
+  }
+
+  it('lists every agent of the project by name, those without a decision too', async () => {
+    const zeta = await addAgent(projectId, 'zeta')
+    await addAgent(projectId, 'alpha')
+    await addDecision(projectId, zeta, T0)
+    const neighbour = await createProject(cookie, 'Neighbour')
+    await addAgent(neighbour, 'other')
+
+    const body = await agentsOf(projectId)
+    expect(body.truncated).toBe(false)
+    expect(body.agents.map((agent) => agent.externalId)).toEqual(['alpha', 'zeta'])
+    expect(body.agents[1]).toMatchObject({ id: zeta.agentId, name: 'Agent zeta' })
+  })
+
+  it('is empty, not an error, before the first agent registers', async () => {
+    expect(await agentsOf(projectId)).toEqual({ agents: [], truncated: false })
+  })
+
+  it(`stops at ${PROJECT_AGENTS_MAX} and says so`, async () => {
+    const insert = (count: number, prefix: string) =>
+      client.query(
+        `INSERT INTO agents (project_id, external_id, name)
+         SELECT $1, $2 || n, $2 || lpad(n::text, 4, '0') FROM generate_series(1, $3) AS n`,
+        [projectId, prefix, count],
+      )
+    await insert(PROJECT_AGENTS_MAX, 'a')
+    const full = await agentsOf(projectId)
+    expect(full.agents).toHaveLength(PROJECT_AGENTS_MAX)
+    expect(full.truncated).toBe(false)
+
+    await insert(1, 'z')
+    const over = await agentsOf(projectId)
+    expect(over.agents).toHaveLength(PROJECT_AGENTS_MAX)
+    expect(over.truncated).toBe(true)
+    // The order holds across the cut: the one past it is the last by name.
+    expect(over.agents.map((agent) => agent.externalId)).not.toContain('z1')
+  })
+
+  it('answers 401 without a session and is not cached', async () => {
+    expect((await call('GET', `/projects/${projectId}/agents`)).status).toBe(401)
+    const response = await call('GET', `/projects/${projectId}/agents`, { cookie })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+  })
+})
+
 const PRIVATE_CONTENT = 'client-position-size-4200'
 
 /** As the SDK sends it: no `Origin`, no cookie, the ingest key in the header. */
@@ -562,6 +624,7 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
   /** Every route that names a project, as the dashboard calls it. */
   const routes = (projectId: string, decisionId: string) =>
     [
+      ['GET', `/projects/${projectId}/agents`],
       ['GET', `/projects/${projectId}/decisions`],
       ['GET', `/projects/${projectId}/decisions?status=pending&limit=1`],
       ['GET', `/projects/${projectId}/decisions/${decisionId}`],

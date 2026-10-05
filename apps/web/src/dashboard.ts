@@ -1,8 +1,13 @@
 import {
   type CreateProjectResponse,
   createProjectResponseSchema,
+  type JournalQuery,
+  type JournalResponse,
+  journalResponseSchema,
   type ListProjectsResponse,
   listProjectsResponseSchema,
+  type ProjectAgentsResponse,
+  projectAgentsResponseSchema,
   type ReissueIngestKeyResponse,
   reissueIngestKeyResponseSchema,
 } from '@agenttrace/shared'
@@ -123,6 +128,18 @@ export interface DashboardApi {
   projects(): Promise<ListProjectsResponse>
   createProject(name: string): Promise<CreateProjectResponse>
   reissueKey(projectId: string): Promise<ReissueIngestKeyResponse>
+  agents(projectId: string): Promise<ProjectAgentsResponse>
+  journal(projectId: string, query: JournalQuery): Promise<JournalResponse>
+}
+
+/** The journal's query string; a filter left unset is left out, not sent empty. */
+export function journalSearch(query: JournalQuery): string {
+  const params = new URLSearchParams()
+  for (const [name, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(name, String(value))
+  }
+  const search = params.toString()
+  return search === '' ? '' : `?${search}`
 }
 
 export function createDashboardApi(config: DashboardConfig): DashboardApi {
@@ -149,6 +166,20 @@ export function createDashboardApi(config: DashboardConfig): DashboardApi {
         reissueIngestKeyResponseSchema,
         await call(config, 'POST', `/v1/projects/${encodeURIComponent(projectId)}/ingest-key`),
       ),
+    agents: async (projectId) =>
+      parseAs(
+        projectAgentsResponseSchema,
+        await call(config, 'GET', `/v1/projects/${encodeURIComponent(projectId)}/agents`),
+      ),
+    journal: async (projectId, query) =>
+      parseAs(
+        journalResponseSchema,
+        await call(
+          config,
+          'GET',
+          `/v1/projects/${encodeURIComponent(projectId)}/decisions${journalSearch(query)}`,
+        ),
+      ),
   }
 }
 
@@ -167,3 +198,6 @@ export const isSignedOut = (cause: unknown): boolean =>
 
 export const sessionQueryKey = ['dashboard-session'] as const
 export const projectsQueryKey = ['dashboard-projects'] as const
+export const agentsQueryKey = (projectId: string) => ['dashboard-agents', projectId] as const
+export const journalQueryKey = (projectId: string, query: JournalQuery) =>
+  ['dashboard-journal', projectId, query] as const

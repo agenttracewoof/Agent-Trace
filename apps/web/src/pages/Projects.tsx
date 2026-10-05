@@ -1,7 +1,7 @@
 import type { ProjectSummary } from '@agenttrace/shared'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   type DashboardApi,
   DashboardError,
@@ -225,7 +225,9 @@ function ProjectList({
       {projects.map((project) => (
         <li className="py-3" key={project.id}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <span className="font-semibold break-all">{project.name}</span>
+            <Link className="font-semibold break-all underline" to={`/projects/${project.id}`}>
+              {project.name}
+            </Link>
             <span className="text-neutral-600">
               {project.role} · {project.dailyQuota.toLocaleString('en-US')} decisions/day · since{' '}
               {createdOn(project.createdAt)}

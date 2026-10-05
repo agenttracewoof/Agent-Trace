@@ -6,9 +6,11 @@ import {
   type JournalEntry,
   type JournalResponse,
   journalQuerySchema,
+  PROJECT_AGENTS_MAX,
+  type ProjectAgentsResponse,
 } from '@agenttrace/shared'
 import { zValidator } from '@hono/zod-validator'
-import { and, desc, eq, gte, lt, type SQL, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, lt, type SQL, sql } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
 import { z } from 'zod'
@@ -38,8 +40,8 @@ const projectIdSchema = z.uuid()
 const decisionIdSchema = hexDigest(16)
 
 /**
- * The operator's reading of a project: its decisions (FR-016, T039) and each
- * one in full (FR-017, T040). Every
+ * The operator's reading of a project: its agents (T042), its decisions
+ * (FR-016, T039) and each one in full (FR-017, T040). Every
  * route sits under `/projects/:projectId`, so the one question that decides
  * access — is this user a member of that project — is asked in one place, and
  * a foreign project answers exactly what an absent one does: 404 (T041).
@@ -64,6 +66,37 @@ export function dashboardRoutes<
     }
     throw new AppError('NOT_FOUND', 'Project not found')
   }
+
+  // Under the project, not `GET /agents`: `POST /v1/agents` is the SDK's
+  // registration behind an ingest key, and this is a member's read behind a cookie.
+  router.get('/projects/:projectId/agents', session, async (c) => {
+    const projectId = await memberProject(c.get('userId'), c.req.param('projectId'))
+
+    const rows = await db
+      .select({
+        id: agents.id,
+        externalId: agents.externalId,
+        name: agents.name,
+        createdAt: agents.createdAt,
+      })
+      .from(agents)
+      .where(eq(agents.projectId, projectId))
+      .orderBy(asc(agents.name), asc(agents.id))
+      .limit(PROJECT_AGENTS_MAX + 1)
+
+    const body: ProjectAgentsResponse = {
+      agents: rows.slice(0, PROJECT_AGENTS_MAX).map((row) => ({
+        id: row.id,
+        externalId: row.externalId,
+        name: row.name,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      truncated: rows.length > PROJECT_AGENTS_MAX,
+    }
+    // An agent registers the moment its SDK starts; a cached list would hide it.
+    c.header('Cache-Control', 'no-store')
+    return c.json(body)
+  })
 
   router.get(
     '/projects/:projectId/decisions',

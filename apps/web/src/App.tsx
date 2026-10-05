@@ -14,6 +14,7 @@ import {
   sessionQueryKey,
 } from './dashboard'
 import { DecisionPage } from './pages/Decision'
+import { Journal } from './pages/Journal'
 import { isSignupOpen, Landing } from './pages/Landing'
 import { Projects } from './pages/Projects'
 import { SignIn } from './pages/SignIn'
@@ -65,6 +66,7 @@ export function App() {
           <Route path="/decisions/:decisionId" element={<DecisionRoute />} />
           <Route path="/sign-in" element={<DashboardRoute screen="sign-in" />} />
           <Route path="/projects" element={<DashboardRoute screen="projects" />} />
+          <Route path="/projects/:projectId" element={<DashboardRoute screen="journal" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
@@ -151,12 +153,15 @@ const VerifyRoute = () => (
   </Shell>
 )
 
+type Screen = 'sign-in' | 'projects' | 'journal'
+
 /**
- * The operator's screens (T079). Both ask the API who is signed in and send
- * the visitor to the other screen when it is the wrong one: signed out on
- * `/projects` goes to sign in, signed in on `/sign-in` goes to the projects.
+ * The operator's screens (T079, T042). Each asks the API who is signed in and
+ * sends the visitor to the right screen when it is the wrong one: signed out
+ * on `/projects` or a journal goes to sign in, signed in on `/sign-in` goes to
+ * the projects.
  */
-function DashboardRoute({ screen }: { screen: 'sign-in' | 'projects' }) {
+function DashboardRoute({ screen }: { screen: Screen }) {
   let api: DashboardApi
   try {
     api = createDashboardApi({ baseUrl: resolveApiBaseUrl(import.meta.env) })
@@ -172,7 +177,8 @@ function DashboardRoute({ screen }: { screen: 'sign-in' | 'projects' }) {
   )
 }
 
-function DashboardScreen({ api, screen }: { api: DashboardApi; screen: 'sign-in' | 'projects' }) {
+function DashboardScreen({ api, screen }: { api: DashboardApi; screen: Screen }) {
+  const { projectId } = useParams<{ projectId: string }>()
   const session = useQuery({
     queryKey: sessionQueryKey,
     queryFn: () => api.session(),
@@ -188,6 +194,11 @@ function DashboardScreen({ api, screen }: { api: DashboardApi; screen: 'sign-in'
     )
   }
 
+  if (screen === 'journal') {
+    if (session.data === null) return <Navigate replace to="/sign-in" />
+    if (projectId === undefined) return <Navigate replace to="/projects" />
+    return <Journal api={api} projectId={projectId} />
+  }
   if (screen === 'projects') {
     return session.data === null ? (
       <Navigate replace to="/sign-in" />
