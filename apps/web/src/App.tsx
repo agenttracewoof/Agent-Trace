@@ -14,6 +14,7 @@ import {
   sessionQueryKey,
 } from './dashboard'
 import { DecisionPage } from './pages/Decision'
+import { DecisionDetails } from './pages/DecisionDetails'
 import { Journal } from './pages/Journal'
 import { isSignupOpen, Landing } from './pages/Landing'
 import { Projects } from './pages/Projects'
@@ -67,6 +68,10 @@ export function App() {
           <Route path="/sign-in" element={<DashboardRoute screen="sign-in" />} />
           <Route path="/projects" element={<DashboardRoute screen="projects" />} />
           <Route path="/projects/:projectId" element={<DashboardRoute screen="journal" />} />
+          <Route
+            path="/projects/:projectId/decisions/:decisionId"
+            element={<DashboardRoute screen="decision" />}
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
@@ -153,12 +158,12 @@ const VerifyRoute = () => (
   </Shell>
 )
 
-type Screen = 'sign-in' | 'projects' | 'journal'
+type Screen = 'sign-in' | 'projects' | 'journal' | 'decision'
 
 /**
  * The operator's screens (T079, T042). Each asks the API who is signed in and
  * sends the visitor to the right screen when it is the wrong one: signed out
- * on `/projects` or a journal goes to sign in, signed in on `/sign-in` goes to
+ * on `/projects`, a journal or a decision goes to sign in, signed in on `/sign-in` goes to
  * the projects.
  */
 function DashboardRoute({ screen }: { screen: Screen }) {
@@ -178,7 +183,7 @@ function DashboardRoute({ screen }: { screen: Screen }) {
 }
 
 function DashboardScreen({ api, screen }: { api: DashboardApi; screen: Screen }) {
-  const { projectId } = useParams<{ projectId: string }>()
+  const { projectId, decisionId } = useParams<{ projectId: string; decisionId: string }>()
   const session = useQuery({
     queryKey: sessionQueryKey,
     queryFn: () => api.session(),
@@ -194,6 +199,22 @@ function DashboardScreen({ api, screen }: { api: DashboardApi; screen: Screen })
     )
   }
 
+  if (screen === 'decision') {
+    if (session.data === null) return <Navigate replace to="/sign-in" />
+    if (projectId === undefined) return <Navigate replace to="/projects" />
+    // Checked before asking, as on the public page: a malformed id names no decision.
+    if (decisionId === undefined || !isDecisionId(decisionId)) {
+      return (
+        <p className="text-neutral-600">
+          No decision under this address.{' '}
+          <Link className="underline" to={`/projects/${projectId}`}>
+            Back to the journal
+          </Link>
+        </p>
+      )
+    }
+    return <DecisionDetails api={api} decisionId={decisionId} projectId={projectId} />
+  }
   if (screen === 'journal') {
     if (session.data === null) return <Navigate replace to="/sign-in" />
     if (projectId === undefined) return <Navigate replace to="/projects" />

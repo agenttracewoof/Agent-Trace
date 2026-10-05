@@ -7,7 +7,7 @@ import {
 } from '@agenttrace/shared'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   agentsQueryKey,
   type DashboardApi,
@@ -131,13 +131,13 @@ export const CLOCK_SLACK_MS = 60_000
 export const isClockAhead = (entry: Pick<JournalEntry, 'decidedAt' | 'receivedAt'>): boolean =>
   entry.decidedAt - Date.parse(entry.receivedAt) > CLOCK_SLACK_MS
 
-const STATUS_LABEL: Readonly<Record<DecisionStatus, string>> = {
+export const STATUS_LABEL: Readonly<Record<DecisionStatus, string>> = {
   pending: 'Waiting for anchor',
   anchored: 'Anchored',
   failed: 'Anchoring failed',
 }
 
-const STATUS_STYLE: Readonly<Record<DecisionStatus, string>> = {
+export const STATUS_STYLE: Readonly<Record<DecisionStatus, string>> = {
   pending: 'bg-neutral-200 text-neutral-800',
   anchored: 'bg-emerald-100 text-emerald-900',
   failed: 'bg-red-100 text-red-900',
@@ -149,6 +149,7 @@ const messageOf = (cause: unknown): string =>
 export function Journal({ api, projectId }: { api: DashboardApi; projectId: string }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useSearchParams()
+  const location = useLocation()
   const filters = filtersFromSearch(search)
   const request = queryFromFilters(filters)
 
@@ -247,7 +248,12 @@ export function Journal({ api, projectId }: { api: DashboardApi; projectId: stri
         <>
           <ul className="mt-6 divide-y divide-neutral-200 border-y border-neutral-200">
             {entries.map((entry) => (
-              <Entry entry={entry} key={entry.decisionId} />
+              <Entry
+                entry={entry}
+                journalSearch={location.search}
+                key={entry.decisionId}
+                projectId={projectId}
+              />
             ))}
           </ul>
           {journal.hasNextPage ? (
@@ -355,12 +361,29 @@ function Filters({
   )
 }
 
-function Entry({ entry }: { entry: JournalEntry }) {
+/** What a details page needs to lead back to the journal as it was left. */
+export interface FromJournal {
+  readonly journalSearch: string
+}
+
+function Entry({
+  entry,
+  projectId,
+  journalSearch,
+}: {
+  entry: JournalEntry
+  projectId: string
+  journalSearch: string
+}) {
+  const from: FromJournal = { journalSearch }
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        {/* The public page until the operator's details page exists (T043). */}
-        <Link className="underline" to={`/decisions/${entry.decisionId}`}>
+        <Link
+          className="underline"
+          state={from}
+          to={`/projects/${projectId}/decisions/${entry.decisionId}`}
+        >
           {signedTime(entry.decidedAt)}
         </Link>
         <span className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLE[entry.status]}`}>

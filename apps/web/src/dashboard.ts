@@ -1,6 +1,8 @@
 import {
   type CreateProjectResponse,
   createProjectResponseSchema,
+  type DecisionDetailsResponse,
+  decisionDetailsResponseSchema,
   type JournalQuery,
   type JournalResponse,
   journalResponseSchema,
@@ -130,6 +132,7 @@ export interface DashboardApi {
   reissueKey(projectId: string): Promise<ReissueIngestKeyResponse>
   agents(projectId: string): Promise<ProjectAgentsResponse>
   journal(projectId: string, query: JournalQuery): Promise<JournalResponse>
+  decision(projectId: string, decisionId: string): Promise<DecisionDetailsResponse>
 }
 
 /** The journal's query string; a filter left unset is left out, not sent empty. */
@@ -171,6 +174,15 @@ export function createDashboardApi(config: DashboardConfig): DashboardApi {
         projectAgentsResponseSchema,
         await call(config, 'GET', `/v1/projects/${encodeURIComponent(projectId)}/agents`),
       ),
+    decision: async (projectId, decisionId) =>
+      parseAs(
+        decisionDetailsResponseSchema,
+        await call(
+          config,
+          'GET',
+          `/v1/projects/${encodeURIComponent(projectId)}/decisions/${encodeURIComponent(decisionId)}`,
+        ),
+      ),
     journal: async (projectId, query) =>
       parseAs(
         journalResponseSchema,
@@ -199,5 +211,7 @@ export const isSignedOut = (cause: unknown): boolean =>
 export const sessionQueryKey = ['dashboard-session'] as const
 export const projectsQueryKey = ['dashboard-projects'] as const
 export const agentsQueryKey = (projectId: string) => ['dashboard-agents', projectId] as const
+export const decisionDetailsQueryKey = (projectId: string, decisionId: string) =>
+  ['dashboard-decision', projectId, decisionId] as const
 export const journalQueryKey = (projectId: string, query: JournalQuery) =>
   ['dashboard-journal', projectId, query] as const

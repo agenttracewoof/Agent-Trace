@@ -190,6 +190,25 @@ describe("the journal's calls (T042)", () => {
     })
   })
 
+  it('asks for one decision under its project and refuses an answer it does not know', async () => {
+    const { seen, fetch } = fakeFetch(200, { decisionId: 'ab'.repeat(16) })
+    const error = await refusal(
+      createDashboardApi({ baseUrl: BASE, fetch }).decision(PROJECT.id, 'ab'.repeat(16)),
+    )
+    expect(seen[0]?.url).toBe(`${BASE}/v1/projects/${PROJECT.id}/decisions/${'ab'.repeat(16)}`)
+    expect(error.message).toBe('The service answered in a shape this page does not know.')
+  })
+
+  it('carries a 404 for a decision the project does not have', async () => {
+    const { fetch } = fakeFetch(404, {
+      error: { code: 'NOT_FOUND', message: 'Decision not found' },
+    })
+    const error = await refusal(
+      createDashboardApi({ baseUrl: BASE, fetch }).decision(PROJECT.id, 'ab'.repeat(16)),
+    )
+    expect(error.status).toBe(404)
+  })
+
   it('has no query string when nothing filters', () => {
     expect(journalSearch({})).toBe('')
   })

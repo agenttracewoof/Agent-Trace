@@ -71,7 +71,7 @@ function Step({ step, index }: { step: ManifestStep; index: number }) {
         </div>
       )}
 
-      <div className="mt-2 grid gap-1 text-xs text-neutral-500">
+      <div className="mt-2 grid gap-1 text-xs break-all text-neutral-500">
         <div>input hash · {step.inputHash}</div>
         <div>output hash · {step.outputHash}</div>
       </div>
@@ -190,7 +190,19 @@ export function DecisionPage({ api, decisionId }: { api: PublicApi; decisionId: 
   return (
     <div>
       <h1 className="font-semibold">Decision {decision.decisionId}</h1>
+      <DecisionBody decision={decision} />
+    </div>
+  )
+}
 
+/**
+ * The verdict, the record and its anchor — everything the public page shows
+ * below its title. The operator's details page (T043) renders this same body,
+ * so a decision cannot read one way to its operator and another to a stranger.
+ */
+export function DecisionBody({ decision }: { decision: PublicDecisionResponse }) {
+  return (
+    <>
       <section className="mt-4">
         <VerificationState decision={decision} />
       </section>
@@ -215,6 +227,6 @@ export function DecisionPage({ api, decisionId }: { api: PublicApi; decisionId: 
         <h2 className="font-semibold">Anchor</h2>
         <AnchorReference anchor={decision.anchor} />
       </section>
-    </div>
+    </>
   )
 }
