@@ -24,8 +24,19 @@ type ManifestStep = Manifest['steps'][number]
  * крок не читався як крок без вмісту.
  */
 
-export const formatDecidedAt = (decidedAt: number): string =>
-  new Date(decidedAt).toISOString().replace('T', ' ').replace('.000Z', 'Z')
+/** Said instead of a date for a signed time no `Date` can hold. */
+export const PAST_CALENDAR = 'past any calendar date'
+
+/**
+ * The signed time in UTC. The format bounds `decidedAt` only by 2^53 and a
+ * `Date` stops at 8.64e15, where `toISOString` throws: an agent with a broken
+ * clock must not take its decision's page down.
+ */
+export function formatDecidedAt(decidedAt: number): string {
+  const date = new Date(decidedAt)
+  if (Number.isNaN(date.getTime())) return PAST_CALENDAR
+  return date.toISOString().replace('T', ' ').replace('.000Z', 'Z')
+}
 
 export const isPrivate = (step: ManifestStep): boolean => step.private
 

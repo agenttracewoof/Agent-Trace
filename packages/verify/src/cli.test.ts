@@ -286,6 +286,32 @@ describe('exit codes', () => {
     expect(outcome.stdout).toContain(`root ${envelope.manifest.root}`)
   })
 
+  it('prints a verdict for a decision signed past what a Date can hold', async () => {
+    // The format bounds `decidedAt` only by 2^53; a `Date` stops at 8.64e15.
+    // An agent with a broken clock still gets its verdict, not a crash.
+    const late = await signManifest(
+      { ...(await manifestOf(key)), decidedAt: Number.MAX_SAFE_INTEGER },
+      key,
+    )
+    const memo = memoOf(late)
+    const outcome = await run(
+      args(),
+      depsWith({
+        chain: () => ({
+          getSignaturesForAddress: async () => [{ signature: 'sig', err: null }],
+          getTransaction: async () => transactionWith(memo),
+        }),
+        fetch: async () => new Response(JSON.stringify(late), { status: 200 }),
+      }),
+    )
+
+    expect(outcome.code).toBe(0)
+    expect(outcome.stdout.startsWith('verified\n')).toBe(true)
+    expect(outcome.stdout).toContain(
+      `decided ${Number.MAX_SAFE_INTEGER} ms (past any calendar date)`,
+    )
+  })
+
   it('exits 3 while the decision is sound but not anchored yet', async () => {
     const outcome = await run(args(), depsWith({ chain: () => emptyChain() }))
 

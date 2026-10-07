@@ -18,7 +18,7 @@ import {
   retryUnreachable,
   sessionQueryKey,
 } from '../dashboard'
-import { formatDecidedAt } from './Decision'
+import { formatDecidedAt, PAST_CALENDAR } from './Decision'
 
 /**
  * A project's decisions, newest first, filtered by agent, period and anchoring
@@ -110,15 +110,10 @@ export function queryFromFilters(
   }
 }
 
-/**
- * The signed time, in UTC. The format bounds `decidedAt` only by 2^53 and a
- * `Date` stops at 8.64e15, so an agent with a broken clock gets its raw
- * milliseconds rather than taking the page down with a `RangeError`.
- */
+/** The signed time, in UTC; past any calendar date, its raw milliseconds too. */
 export function signedTime(decidedAt: number): string {
-  return Number.isNaN(new Date(decidedAt).getTime())
-    ? `${decidedAt} ms — past any calendar date`
-    : formatDecidedAt(decidedAt)
+  const formatted = formatDecidedAt(decidedAt)
+  return formatted === PAST_CALENDAR ? `${decidedAt} ms — ${PAST_CALENDAR}` : formatted
 }
 
 /**

@@ -211,7 +211,12 @@ function renderHuman(result: VerificationResult, request: CliRequest): string {
   lines.push(`  manifest   ${request.manifestUrl}`)
   lines.push(`  chain      ${redactEndpoint(request.rpcUrl)}`)
   if (result.anchor !== undefined) {
-    const decidedAt = new Date(result.anchor.decidedAt).toISOString()
+    // The anchor carries up to 2^53; a `Date` stops at 8.64e15, where
+    // `toISOString` throws — and the verdict must still be printed.
+    const at = new Date(result.anchor.decidedAt)
+    const decidedAt = Number.isNaN(at.getTime())
+      ? `${result.anchor.decidedAt} ms (past any calendar date)`
+      : at.toISOString()
     lines.push(`  anchor     root ${result.anchor.root}, decided ${decidedAt}`)
   }
   if (result.origin !== undefined) lines.push(`  origin     ${result.origin}`)
