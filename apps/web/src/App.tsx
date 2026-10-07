@@ -16,7 +16,6 @@ import {
 import { DecisionPage } from './pages/Decision'
 import { DecisionDetails } from './pages/DecisionDetails'
 import { Journal } from './pages/Journal'
-import { isSignupOpen, Landing } from './pages/Landing'
 import { Projects } from './pages/Projects'
 import { SignIn } from './pages/SignIn'
 import { VerifyPage } from './pages/Verify'
@@ -62,7 +61,7 @@ export function App() {
           поле, а корінь — це `'/'`, не «нічого». */}
       <BrowserRouter basename={basename === '' ? '/' : basename}>
         <Routes>
-          <Route path="/" element={<LandingRoute />} />
+          <Route path="/" element={<HomeRoute />} />
           <Route path="/verify" element={<VerifyRoute />} />
           <Route path="/decisions/:decisionId" element={<DecisionRoute />} />
           <Route path="/sign-in" element={<DashboardRoute screen="sign-in" />} />
@@ -97,32 +96,38 @@ const Fatal = ({ message }: { message: string }) => (
 )
 
 /**
- * The landing page asks the build, not its author, whether an API address is
- * set: without one the decision page cannot work, and the page says so instead
- * of offering a form that leads nowhere.
+ * The home page is not part of this app: it is the static page in
+ * `apps/landing`, served at the site's root, and this bundle answers every
+ * other address through `404.html`. Nothing in production routes here; a
+ * link back home is a full load of that page (`homeHref`). What remains is
+ * for `pnpm dev`, which has no landing to show.
  */
-function LandingRoute() {
-  let hasApi = true
-  try {
-    resolveApiBaseUrl(import.meta.env)
-  } catch {
-    hasApi = false
-  }
+const HomeRoute = () => (
+  <Shell>
+    <h1 className="font-semibold">AgentTrace</h1>
+    <p className="mt-2 text-neutral-600">
+      The home page is served separately (<code>apps/landing</code>).{' '}
+      <Link className="underline" to="/verify">
+        Verify a decision
+      </Link>{' '}
+      ·{' '}
+      <Link className="underline" to="/sign-in">
+        Sign in
+      </Link>
+    </p>
+  </Shell>
+)
 
-  return (
-    <Shell>
-      <Landing hasApi={hasApi} signupOpen={isSignupOpen(import.meta.env)} />
-    </Shell>
-  )
-}
+/** The static home page: a full load, since it is not a route of this app. */
+const homeHref = import.meta.env.BASE_URL
 
 const NotFound = () => (
   <Shell>
     <h1 className="font-semibold">Nothing here</h1>
     <p className="mt-2 text-neutral-600">
-      <Link className="underline" to="/">
+      <a className="underline" href={homeHref}>
         Back
-      </Link>
+      </a>
     </p>
   </Shell>
 )

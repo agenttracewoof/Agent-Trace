@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'apps/web/**'
+      - 'apps/landing/**'
       - 'packages/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -62,6 +63,30 @@ jobs:
       - name: Serve deep links
         run: cp apps/web/dist/index.html apps/web/dist/404.html
 
+      # The home page is the static `apps/landing` (owner's decision 2026-10-07);
+      # the app keeps every other address. Deep links still reach it through
+      # 404.html; the three addresses the home page links to get the app's
+      # document as real files, so entering the app from home answers 200.
+      # The landing's sign-in links sit on `data-signup` lines and are dropped
+      # unless the signup switch is on, as the button was before.
+      - name: Assemble the site
+        env:
+          VITE_SIGNUP_OPEN: ${{ vars.VITE_SIGNUP_OPEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r apps/web/dist/. site/
+          for route in verify sign-in projects; do
+            mkdir -p "site/$route"
+            cp site/404.html "site/$route/index.html"
+          done
+          rm site/index.html
+          cp -r apps/landing/. site/
+          if [ "${VITE_SIGNUP_OPEN:-}" != "true" ]; then
+            sed -i '/data-signup/d' site/index.html
+          fi
+          test -f site/index.html && test -f site/404.html && test -f site/assets/og.png
+
       # ⚠️ Перед першим успішним прогоном Pages треба **увімкнути руками**:
       # Settings → Pages → Source: **GitHub Actions**. Створити сайт із workflow
       # не вийде: `enablement: true` віддає `Resource not accessible by
@@ -70,7 +95,7 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/web/dist
+          path: site
 
   deploy:
     needs: build

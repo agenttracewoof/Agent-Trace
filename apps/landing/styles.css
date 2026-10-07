@@ -1,0 +1,388 @@
+/*
+ * AgentTrace landing — the page reads as one report of the verifier.
+ * Terminal, monospace only, three hues: each one a verdict and nothing else.
+ */
+
+:root {
+  --screen: #0b0d0c;
+  --panel: #0f1210;
+  --ink: #d9e0da;
+  --ink-2: #9aa39c;
+  --rule: #232823;
+  --verified: #4cc38a;
+  --pending: #e0b04a;
+  --tampered: #f0605a;
+  --display: "Martian Mono", ui-monospace, monospace;
+  --body: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --screen: #f4f5f1;
+    --panel: #ebede7;
+    --ink: #141714;
+    --ink-2: #4a524c;
+    --rule: #d8dcd6;
+    --verified: #1e7a4e;
+    --pending: #8a6212;
+    --tampered: #b3261e;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--screen);
+  color: var(--ink);
+  font: 16px / 1.6 var(--body);
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+pre {
+  margin: 0;
+  font: inherit;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Header */
+
+.top {
+  border-bottom: 1px solid var(--rule);
+}
+
+.top .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font: 600 15px / 1 var(--display);
+  letter-spacing: 0.02em;
+}
+
+.brand img {
+  display: block;
+  width: 40px;
+  height: 30px;
+}
+
+.top nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-left: auto;
+  font-size: 14px;
+}
+
+/* Hero */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 88px 0 72px;
+}
+
+.kicker {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+h1 {
+  margin: 0;
+  max-width: 960px;
+  font: 600 40px / 1.25 var(--display);
+  letter-spacing: -0.01em;
+}
+
+.lead {
+  margin: 0;
+  max-width: 760px;
+  color: var(--ink-2);
+  font-size: 18px;
+}
+
+.terminal {
+  margin: 16px 0 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.terminal-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.terminal-bar span:last-child {
+  margin-left: auto;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.terminal pre {
+  padding: 24px;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.terminal figcaption {
+  padding: 12px 16px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/*
+ * The transcript prints once, line by line. `backwards` hides a line only until
+ * its own animation starts, so a line is never left hidden if timers stall;
+ * still for those who asked for no motion.
+ */
+.l {
+  display: block;
+  min-height: 1.7em;
+  animation: print 160ms ease-out backwards;
+  animation-delay: calc(var(--i) * 140ms + 300ms);
+}
+
+@keyframes print {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .l {
+    animation: none;
+  }
+}
+
+.dim {
+  color: var(--ink-2);
+}
+
+.ok {
+  color: var(--verified);
+}
+
+.bad {
+  color: var(--tampered);
+}
+
+.warn {
+  color: var(--pending);
+}
+
+.verdict {
+  font-weight: 700;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.button.quiet {
+  border-color: var(--rule);
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+/* Fields of the report */
+
+.field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 48px;
+  padding: 48px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.field:last-of-type {
+  padding-bottom: 72px;
+}
+
+.name {
+  flex: 1 1 200px;
+  max-width: 220px;
+  color: var(--ink-2);
+  font: 14px / 1.6 var(--display);
+}
+
+.name.bad {
+  color: var(--tampered);
+}
+
+.name.warn {
+  color: var(--pending);
+}
+
+.body {
+  display: flex;
+  flex: 999 1 560px;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+h2 {
+  margin: 0;
+  font: 600 24px / 1.35 var(--display);
+}
+
+.body p {
+  margin: 0;
+  max-width: 720px;
+}
+
+.figure-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  border-left: 2px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.figure-line strong {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.code {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.code pre {
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.limits pre {
+  padding: 20px;
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.note {
+  color: var(--ink-2);
+}
+
+/* Footer */
+
+.foot {
+  border-top: 1px solid var(--rule);
+}
+
+.foot .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding-top: 24px;
+  padding-bottom: 24px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .hero {
+    padding: 56px 0 48px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  .lead {
+    font-size: 16px;
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  .terminal pre,
+  .code pre,
+  .limits pre {
+    padding: 16px;
+    font-size: 13px;
+  }
+
+  .top nav {
+    margin-left: 0;
+  }
+}

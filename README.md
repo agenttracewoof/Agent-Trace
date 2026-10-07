@@ -33,6 +33,7 @@ are a different layer; so are spending controls.
 apps/api          ingest, public read, dashboard API
 apps/publisher    worker: pending decisions → anchor transaction
 apps/web          dashboard + public decision page
+apps/landing      static home page, the root of the Pages site
 packages/manifest  format, hashing, signing, verification — pure, isomorphic
 packages/sdk       the client SDK agents integrate
 packages/verify    CLI that verifies from public data alone

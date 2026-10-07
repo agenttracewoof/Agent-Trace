@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentTrace — a record your AI agent cannot quietly rewrite</title>
+  <meta name="description" content="Signed, tamper-evident records of what your AI agent decided and what it relied on. Anchored on Solana, checked by anyone in their own browser.">
+  <meta name="theme-color" content="#0b0d0c">
+  <link rel="canonical" href="https://agenttracewoof.github.io/Agent-Trace/">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AgentTrace">
+  <meta property="og:title" content="AgentTrace — a record your AI agent cannot quietly rewrite">
+  <meta property="og:description" content="Signed, tamper-evident records of what your AI agent decided and what it relied on. Anchored on Solana, checked by anyone in their own browser.">
+  <meta property="og:url" content="https://agenttracewoof.github.io/Agent-Trace/">
+  <meta property="og:image" content="https://agenttracewoof.github.io/Agent-Trace/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AgentTrace: a verifier run that says verified, then tampered after one number in the record was changed.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600&amp;display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./">
+        <picture>
+          <source srcset="assets/logo-on-light.png" media="(prefers-color-scheme: light)">
+          <img src="assets/logo-on-dark.png" alt="" width="40" height="30">
+        </picture>
+        AgentTrace
+      </a>
+      <nav aria-label="Main">
+        <a href="verify/">Verify in your browser</a>
+        <a href="sign-in/" data-signup>Get an ingest key</a>
+        <a href="https://github.com/agenttracewoof/Agent-Trace">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero">
+      <p class="kicker">signed decision records for AI agents · Solana devnet</p>
+      <h1 id="hero">What your AI agent decided, and what it relied on — in a record nobody can quietly rewrite. Not you, not us.</h1>
+      <p class="lead">The agent signs each decision with a key that never leaves its machine. The record’s root goes on Solana. Whoever holds the link runs the check — in a browser, or from the source.</p>
+
+      <figure class="terminal">
+        <div class="terminal-bar"><span>agenttrace-verify</span><span>exit codes: 0 verified · 2 tampered · 3 pending</span></div>
+        <div class="scroll">
+<pre><span class="l" style="--i:0"><span class="dim">$</span> agenttrace-verify --agent 8b2e…139d --decision efaf…3e0b --manifest decision.json</span><span class="l verdict ok" style="--i:1">verified</span><span class="l" style="--i:2"></span><span class="l" style="--i:3">  decision   efaf6ab8ac58cb01eac50ed549be3e0b</span><span class="l" style="--i:4">  anchor     root 1412c6c4…cc72, decided 2026-08-17T11:24:09.560Z</span><span class="l" style="--i:5"></span><span class="l" style="--i:6"><span class="dim">no AgentTrace service was asked anything.</span>                  <span class="ok">exit 0</span></span><span class="l" style="--i:7"></span><span class="l dim" style="--i:8"># one price in step 0 changed after the fact: 46.79 → 41.79</span><span class="l" style="--i:9"><span class="dim">$</span> agenttrace-verify … --manifest decision-edited.json</span><span class="l verdict bad" style="--i:10">tampered</span><span class="l" style="--i:11"></span><span class="l bad" style="--i:12">2 discrepancies</span><span class="l" style="--i:13">  <span class="bad">step-hash-mismatch</span>  step 0: output does not hash to outputHash</span><span class="l" style="--i:14">  <span class="bad">signature-invalid</span>   signature does not match the manifest digest</span><span class="l" style="--i:15">                                                                <span class="bad">exit 2</span></span></pre>
+        </div>
+        <figcaption>A real run of the open-source verifier on the bundled example decision. Solana devnet, 2026-10-07.</figcaption>
+      </figure>
+
+      <div class="actions">
+        <a class="button" href="verify/">Verify one in your browser →</a>
+        <a class="button quiet" href="sign-in/" data-signup>Get an ingest key</a>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-signature">
+      <div class="name">signature</div>
+      <div class="body">
+        <h2 id="f-signature">Signed where the decision was made.</h2>
+        <p>The SDK creates the agent’s key pair on first run and keeps the private half in the agent’s own directory. Every decision is signed with it before anything is sent. AgentTrace never sees that key, so it cannot forge a decision or backdate one.</p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-steps">
+      <div class="name">steps</div>
+      <div class="body">
+        <h2 id="f-steps">Every step is hashed. Only what you allow is published.</h2>
+        <p>Each step — a model call, a tool call, a data read — is hashed into one root. The policy is an allow-list: a field it does not name never leaves the agent. A shop key the agent passed to its tool is simply not in the record.</p>
+        <p class="figure-line"><span><strong>0 secrets published</strong> in 200 test decisions that carried them.</span></p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-anchor">
+      <div class="name">anchor</div>
+      <div class="body">
+        <h2 id="f-anchor">On Solana within seconds, for a fraction of a cent.</h2>
+        <p>The root and the signature go into one Solana transaction. A browser reads it straight from a public node; AgentTrace is not in that path.</p>
+        <div class="figure-line">
+          <span><strong>95% of decisions checkable within 6.2 s</strong> of the agent finishing them — 10,000 decisions over one day, 2026-09-28 → 29 UTC.</span>
+          <span><strong>5,000 lamports a decision</strong> — about $0.0006 at SOL $119.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-disc">
+      <div class="name bad">discrepancies</div>
+      <div class="body">
+        <h2 id="f-disc">Change one number, and the check names the step.</h2>
+        <p>In the second run above, one price the agent read was changed after the fact. The check says which step no longer matches its hash, and that the signature fails. The same edit in the browser:</p>
+        <img class="shot" src="assets/verify-tampered.png" width="705" height="881" alt="The Verify page showing the edited example as tampered: step 0 output does not hash to outputHash, and the signature does not match the manifest digest.">
+        <p class="figure-line"><span><strong>50 of 50 altered records caught</strong>; 0 false alarms on 200 honest ones.</span></p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-where">
+      <div class="name">where</div>
+      <div class="body">
+        <h2 id="f-where">In your browser, or from the source.</h2>
+        <p>The Verify page reads the anchor from Solana in your browser and calls no AgentTrace service. The same check ships as a command-line verifier in the repository, and by design it cannot reach our API. What no page can do for you: compare the agent key with the one you expect.</p>
+        <p><a href="verify/">Open the Verify page</a> · <a href="https://github.com/agenttracewoof/Agent-Trace/tree/main/packages/verify">packages/verify on GitHub</a></p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-journal">
+      <div class="name">journal</div>
+      <div class="body">
+        <h2 id="f-journal">Every decision of a project, in one place.</h2>
+        <p>Operators sign in with a code sent by email — no password, no wallet. The journal lists a project’s decisions newest first, filtered by agent, by day and by anchoring state, and the address keeps the filter. A decision’s page there shows the same verdict a stranger sees, plus which agent decided and when it reached us.</p>
+        <p data-signup><a href="sign-in/">Sign in</a></p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-install">
+      <div class="name">install</div>
+      <div class="body">
+        <h2 id="f-install">Five expressions in your agent.</h2>
+        <div class="code scroll">
+<pre id="sdk-example"><span class="dim">$</span> npm install @agenttracewoof/sdk
+
+import { createClient } from '@agenttracewoof/sdk'
+
+const trace = await createClient({
+  agent: { externalId: 'my-agent', name: 'My agent' },
+  policy: { stepInput: ['query'], stepOutput: ['answer'], outcome: ['action'] },
+})
+
+const id = await trace.record({
+  model: 'gpt-4o-mini',
+  steps: [{ type: 'llm', input: { query: 'Should I rebalance?' }, output: { answer: 'yes' } }],
+  outcome: { action: 'rebalance' },
+})</pre>
+        </div>
+        <p>Recording never waits on us: the decision is signed and queued, and delivery runs in the background.</p>
+        <p class="figure-line"><span>From <strong>npm install to a verified decision: 59 s and 1 min 14 s</strong>, by a developer new to the SDK, on two open-source agent templates — 5–6 expressions of integration (2026-09-30).</span></p>
+      </div>
+    </section>
+
+    <section class="field" aria-labelledby="f-outside">
+      <div class="name warn">outside the check</div>
+      <div class="body">
+        <h2 id="f-outside">What a verified record does not tell you.</h2>
+        <div class="code limits">
+<pre><span class="warn">not checked</span>  whether the decision was good — only what it relied on
+<span class="warn">not checked</span>  fields the policy left out — the record proves what was published
+<span class="warn">not checked</span>  who the agent is — a key is a key; compare it with the one you expect
+<span class="warn">not lasting</span>  Solana devnet is reset from time to time; every anchor here is a demo</pre>
+        </div>
+        <p class="note">A new project records up to 100 decisions a day. The API sleeps when idle; the first request after a pause can take up to a minute.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <a href="https://github.com/agenttracewoof/Agent-Trace">github.com/agenttracewoof/Agent-Trace</a>
+      <a href="https://github.com/agenttracewoof/Agent-Trace/blob/main/LICENSE">MIT License</a>
+      <a href="https://www.npmjs.com/package/@agenttracewoof/sdk">@agenttracewoof/sdk on npm</a>
+      <a href="https://github.com/agenttracewoof/Agent-Trace/issues">Issues</a>
+    </div>
+  </footer>
+</body>
+</html>
