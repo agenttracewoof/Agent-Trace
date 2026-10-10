@@ -59,3 +59,7 @@ forge or backdate a manifest. Storage holds the content but does not vouch for i
 tampering is caught by the on-chain root. The chain attests only that a byte string
 existed in a given slot; signature validity is established off-chain by
 `packages/verify`, which by design cannot reach the AgentTrace API.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
