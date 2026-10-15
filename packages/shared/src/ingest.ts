@@ -20,6 +20,22 @@ export const registerAgentRequestSchema = z.strictObject({
 export const registerAgentResponseSchema = z.object({ agentId: z.uuid() })
 
 /**
+ * `proof` is the current key's signature over the rotation statement
+ * (`keyRotationDigest`), and `effectiveAt` is part of what it signs.
+ */
+export const rotateAgentKeyRequestSchema = z.strictObject({
+  newPublicKey: hexDigest(32),
+  effectiveAt: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  proof: hexDigest(64),
+})
+
+export const rotateAgentKeyResponseSchema = z.object({
+  agentId: z.uuid(),
+  publicKey: hexDigest(32),
+  effectiveAt: z.int(),
+})
+
+/**
  * Тіло — підписаний конверт як є. Підпис покриває дайджест манифесту, тож
  * будь-яке поле поза ним непідписане; плаский набір полів змусив би API
  * збирати манифест назад, і кожна розбіжність складання робила б чесне
@@ -38,6 +54,8 @@ export const submitDecisionResponseSchema = z.object({
 
 export type RegisterAgentRequest = z.infer<typeof registerAgentRequestSchema>
 export type RegisterAgentResponse = z.infer<typeof registerAgentResponseSchema>
+export type RotateAgentKeyRequest = z.infer<typeof rotateAgentKeyRequestSchema>
+export type RotateAgentKeyResponse = z.infer<typeof rotateAgentKeyResponseSchema>
 export type SubmitDecisionRequest = z.infer<typeof submitDecisionRequestSchema>
 export type SubmitDecisionResponse = z.infer<typeof submitDecisionResponseSchema>
 export type DecisionStatus = z.infer<typeof decisionStatusSchema>
