@@ -50,6 +50,7 @@ describe('міграції', () => {
       '0002_anchor_in_flight.sql',
       '0003_auth.sql',
       '0004_self_serve.sql',
+      '0005_administrative_proof_after_publish.sql',
     ])
   })
 

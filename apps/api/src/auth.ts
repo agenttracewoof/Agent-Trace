@@ -110,8 +110,11 @@ export type Auth = ReturnType<typeof createAuth>
 /** The session behind a request's cookie, as `sessionAuth` asks for it. */
 export const sessionUserOf =
   (auth: Auth): SessionLookup =>
-  async (headers) =>
-    (await auth.api.getSession({ headers }))?.user.id
+  async (headers) => {
+    const found = await auth.api.getSession({ headers })
+    if (found === null) return undefined
+    return { userId: found.user.id, signedInAt: found.session.createdAt.getTime() }
+  }
 
 /**
  * Only `sign-in`: the other code types belong to password and email-change

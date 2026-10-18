@@ -24,6 +24,7 @@ import {
   projectsOf,
   reissueIngestKey,
 } from '../projects.js'
+import { agentKeyReplacementRoutes } from './agents.js'
 import { dashboardRoutes } from './dashboard.js'
 
 type Db<
@@ -64,6 +65,7 @@ export function projectRoutes<
   router.use('/projects/*', requireDashboardOrigin(options.webOrigin))
   // The journal lives under `/projects/:projectId` and relies on the two guards above.
   router.route('/', dashboardRoutes(db, { sessionUser: options.sessionUser }))
+  router.route('/', agentKeyReplacementRoutes(db, { sessionUser: options.sessionUser }))
 
   router.get('/projects', session, async (c) => {
     const body: ListProjectsResponse = {

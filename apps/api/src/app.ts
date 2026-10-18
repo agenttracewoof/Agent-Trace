@@ -19,6 +19,7 @@ export interface Variables {
   project: ProjectContext
   /** Likewise only behind `sessionAuth` — the dashboard's routes (T078). */
   userId: string
+  signedInAt: number
 }
 
 export interface AppOptions {

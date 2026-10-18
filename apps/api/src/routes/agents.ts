@@ -1,10 +1,11 @@
-import { agentKeys, agents, decisions } from '@agenttrace/db'
+import { agentKeys, agents, decisions, members } from '@agenttrace/db'
 import { verifyKeyRotation } from '@agenttrace/manifest'
 import {
   type RegisterAgentRequest,
   type RotateAgentKeyRequest,
   type RotateAgentKeyResponse,
   registerAgentRequestSchema,
+  replaceAgentKeyRequestSchema,
   rotateAgentKeyRequestSchema,
 } from '@agenttrace/shared'
 import { zValidator } from '@hono/zod-validator'
@@ -16,6 +17,7 @@ import { assertAgentPubkeyUsable } from '../agent-pubkey.js'
 import type { Variables } from '../app.js'
 import { AppError } from '../errors.js'
 import { ingestAuth, projectByIngestKeyHash } from '../middleware/auth.js'
+import { type SessionLookup, sessionAuth } from '../middleware/dashboard.js'
 
 /**
  * Початковий ключ дійсний **з нуля**, а не з моменту реєстрації. Попередника
@@ -294,7 +296,164 @@ async function rotateAgentKey<
   return accepted
 }
 
+/**
+ * How recent the owner's sign-in must be to confirm an emergency replacement.
+ * The replacement hands the agent's identity to a new key for good, so a
+ * long-lived cookie alone — stolen or left open — must not be enough; signing
+ * in again means a fresh code by mail.
+ */
+const RECENT_SIGN_IN_MS = 10 * 60 * 1000
+
+async function isOwnerOf<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(db: Db<TQueryResult, TFullSchema>, userId: string, projectId: string): Promise<boolean> {
+  const [found] = await db
+    .select({ userId: members.userId })
+    .from(members)
+    .where(
+      and(eq(members.projectId, projectId), eq(members.userId, userId), eq(members.role, 'owner')),
+    )
+    .limit(1)
+
+  return found !== undefined
+}
+
+/**
+ * FR-027: the previous key is lost, so nothing proves continuity but the
+ * owner's word. `effectiveAt` is therefore the moment of confirmation and
+ * never earlier: a line drawn back in time would let the service — or
+ * whoever holds the owner's session — disown decisions already anchored.
+ * The proof stays empty here; the payer signs it when it publishes the anchor.
+ */
+async function replaceAgentKey<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(
+  db: Db<TQueryResult, TFullSchema>,
+  confirmedBy: string,
+  projectId: string,
+  agentId: string,
+  newPublicKey: string,
+): Promise<RotateAgentKeyResponse> {
+  const current = (await isOwnerOf(db, confirmedBy, projectId))
+    ? await currentKeyOf(db, projectId, agentId)
+    : undefined
+  // An operator sees the agent but may not replace its key; with no
+  // FORBIDDEN in the API, that answers like any agent they cannot act on.
+  if (current === undefined) throw new AppError('NOT_FOUND', AGENT_NOT_FOUND)
+
+  const isThisReplacement = (key: CurrentKey) =>
+    key.publicKey === newPublicKey && key.rotationKind === 'administrative'
+  if (isThisReplacement(current)) {
+    return { agentId, publicKey: newPublicKey, effectiveAt: current.validFrom }
+  }
+
+  assertAgentPubkeyUsable(newPublicKey)
+  if ((await agentHoldingKey(db, newPublicKey)) !== undefined) {
+    throw new AppError('INVALID_INPUT', KEY_TAKEN)
+  }
+
+  const effectiveAt = Date.now()
+  if (effectiveAt <= current.validFrom) {
+    throw new AppError('INVALID_INPUT', 'The current key has not taken effect yet', {
+      validFrom: current.validFrom,
+    })
+  }
+  const latest = await latestDecisionOf(db, current.id)
+  if (latest !== undefined && latest >= effectiveAt) {
+    throw new AppError('INVALID_INPUT', 'The current key signed a decision dated after now', {
+      latestDecidedAt: latest,
+    })
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      const closed = await tx
+        .update(agentKeys)
+        .set({ validTo: effectiveAt })
+        .where(and(eq(agentKeys.id, current.id), isNull(agentKeys.validTo)))
+        .returning({ id: agentKeys.id })
+
+      if (closed.length === 0) {
+        throw new AppError(
+          'INVALID_INPUT',
+          "The agent's key changed while this replacement was being made; look at it again",
+        )
+      }
+
+      await tx.insert(agentKeys).values({
+        agentId,
+        publicKey: newPublicKey,
+        validFrom: effectiveAt,
+        rotationKind: 'administrative',
+        prevKeyId: current.id,
+        confirmedBy,
+      })
+    })
+  } catch (cause) {
+    const stored = await currentKeyOf(db, projectId, agentId)
+    if (stored !== undefined && isThisReplacement(stored)) {
+      return { agentId, publicKey: newPublicKey, effectiveAt: stored.validFrom }
+    }
+    if (cause instanceof AppError) throw cause
+    if ((await agentHoldingKey(db, newPublicKey)) !== undefined) {
+      throw new AppError('INVALID_INPUT', KEY_TAKEN)
+    }
+    throw cause
+  }
+
+  return { agentId, publicKey: newPublicKey, effectiveAt }
+}
+
 const agentIdParamSchema = z.object({ id: z.uuid() })
+const projectAgentParamSchema = z.object({ projectId: z.uuid(), agentId: z.uuid() })
+
+export interface AgentKeyReplacementRoutesOptions {
+  readonly sessionUser: SessionLookup
+}
+
+/**
+ * The owner's side of the key history, behind a session rather than an
+ * ingest key: the SDK cannot replace a key it has lost. Mounted by
+ * `projectRoutes`, which owns CORS and the Origin check for `/projects/*`.
+ */
+export function agentKeyReplacementRoutes<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(db: Db<TQueryResult, TFullSchema>, options: AgentKeyReplacementRoutesOptions) {
+  const router = new Hono<{ Variables: Variables }>()
+
+  router.post(
+    '/projects/:projectId/agents/:agentId/rotate-admin',
+    sessionAuth(options.sessionUser),
+    zValidator('param', projectAgentParamSchema, (result) => {
+      if (!result.success) throw new AppError('NOT_FOUND', AGENT_NOT_FOUND)
+    }),
+    zValidator('json', replaceAgentKeyRequestSchema, (result) => {
+      if (!result.success) throw result.error
+    }),
+    async (c) => {
+      if (Date.now() - c.get('signedInAt') > RECENT_SIGN_IN_MS) {
+        throw new AppError('UNAUTHORIZED', 'Sign in again to confirm a key replacement', {
+          reason: 'STALE_SIGN_IN',
+        })
+      }
+      const { projectId, agentId } = c.req.valid('param')
+      const replaced = await replaceAgentKey(
+        db,
+        c.get('userId'),
+        projectId,
+        agentId,
+        c.req.valid('json').newPublicKey,
+      )
+      c.header('Cache-Control', 'no-store')
+      return c.json(replaced)
+    },
+  )
+
+  return router
+}
 
 export function agentRoutes<
   TQueryResult extends PgQueryResultHKT,

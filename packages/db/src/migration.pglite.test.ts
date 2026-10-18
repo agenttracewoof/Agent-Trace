@@ -340,6 +340,20 @@ describe('users and membership', () => {
     expect(await rejects('DELETE FROM users WHERE id = $1', [OWNER])).toBe('23001')
   })
 
+  it('accepts an emergency replacement the payer has not signed yet', async () => {
+    // The payer's signature is made by whoever publishes the anchor, so it
+    // arrives after the owner's confirmation, not with it.
+    await insertKey('c0000005-0000-4000-8000-000000000005', hex(32, '7a'), 'administrative', {
+      prevKeyId: KEY,
+      confirmedBy: OWNER,
+    })
+    const rows = await db.query<{ proof: string | null }>(
+      'SELECT rotation_proof AS proof FROM agent_keys WHERE id = $1',
+      ['c0000005-0000-4000-8000-000000000005'],
+    )
+    expect(rows.rows[0]?.proof).toBeNull()
+  })
+
   it('takes sessions and memberships along with a deleted user', async () => {
     await db.query(
       `INSERT INTO sessions (token, user_id, expires_at) VALUES ('t', $1, now() + interval '1 day')`,

@@ -35,20 +35,28 @@ export const requireDashboardOrigin =
     await next()
   }
 
-/** Resolves the session cookie in these headers to a user id, if it opens one. */
-export type SessionLookup = (headers: Headers) => Promise<string | undefined>
+export interface SessionUser {
+  readonly userId: string
+  /** When this session was opened, in ms — a sign-in, not the last refresh. */
+  readonly signedInAt: number
+}
+
+/** Resolves the session cookie in these headers to its user, if it opens one. */
+export type SessionLookup = (headers: Headers) => Promise<SessionUser | undefined>
 
 /**
- * A route behind this has `userId` set. No cache, for the reason `ingestAuth`
- * has none: a signed-out session must stop working on the next request.
+ * A route behind this has `userId` and `signedInAt` set. No cache, for the
+ * reason `ingestAuth` has none: a signed-out session must stop working on the
+ * next request.
  */
 export const sessionAuth =
   (lookup: SessionLookup): MiddlewareHandler<{ Variables: Variables }> =>
   async (c, next) => {
-    const userId = await lookup(c.req.raw.headers)
-    if (userId === undefined) {
+    const user = await lookup(c.req.raw.headers)
+    if (user === undefined) {
       throw new AppError('UNAUTHORIZED', 'Sign in to continue')
     }
-    c.set('userId', userId)
+    c.set('userId', user.userId)
+    c.set('signedInAt', user.signedInAt)
     await next()
   }

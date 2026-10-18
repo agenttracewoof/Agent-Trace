@@ -170,8 +170,10 @@ export const agentKeys = pgTable(
     /**
      * Форма запису мусить відповідати способу заміни, інакше «розрив тяглості
      * приховати неможливо» трималося б на коді, який цей рядок пише. Початковий
-     * ключ не має ані попередника, ані доказу; обидва види ротації мають обох;
-     * аварійна додатково потребує імені того, хто її підтвердив.
+     * ключ не має ані попередника, ані доказу; обидва види ротації мають
+     * попередника; аварійна додатково потребує імені того, хто її підтвердив.
+     * Proof of an administrative row may still be missing: the payer signs it
+     * when it publishes the anchor, after the owner has confirmed.
      */
     check(
       'agent_keys_rotation_shape',
@@ -185,7 +187,6 @@ export const agentKeys = pgTable(
           AND ${table.rotationProof} IS NOT NULL)
         OR (${table.rotationKind} = 'administrative'
           AND ${table.prevKeyId} IS NOT NULL
-          AND ${table.rotationProof} IS NOT NULL
           AND ${table.confirmedBy} IS NOT NULL)
       `,
     ),

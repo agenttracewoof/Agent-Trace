@@ -104,6 +104,16 @@ export const decisionDetailsResponseSchema = publicDecisionResponseSchema.extend
   receivedAt: z.iso.datetime(),
 })
 
+/**
+ * The owner's emergency replacement of a lost key (FR-027). Only the new
+ * public key: no previous key is left to sign, and `effectiveAt` is the moment
+ * of confirmation, which the service records rather than the client claims.
+ * The answer is a rotation's, `rotateAgentKeyResponseSchema`.
+ */
+export const replaceAgentKeyRequestSchema = z.strictObject({
+  newPublicKey: hexDigest(32),
+})
+
 export type JournalQuery = z.infer<typeof journalQuerySchema>
 export type JournalAgent = z.infer<typeof journalAgentSchema>
 export type ProjectAgent = z.infer<typeof projectAgentSchema>
