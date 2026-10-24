@@ -13,6 +13,7 @@ import {
   retryUnreachable,
   sessionQueryKey,
 } from './dashboard'
+import { AgentKeys } from './pages/AgentKeys'
 import { DecisionPage } from './pages/Decision'
 import { DecisionDetails } from './pages/DecisionDetails'
 import { Journal } from './pages/Journal'
@@ -70,6 +71,10 @@ export function App() {
           <Route
             path="/projects/:projectId/decisions/:decisionId"
             element={<DashboardRoute screen="decision" />}
+          />
+          <Route
+            path="/projects/:projectId/agents/:agentId/keys"
+            element={<DashboardRoute screen="keys" />}
           />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -163,12 +168,12 @@ const VerifyRoute = () => (
   </Shell>
 )
 
-type Screen = 'sign-in' | 'projects' | 'journal' | 'decision'
+type Screen = 'sign-in' | 'projects' | 'journal' | 'decision' | 'keys'
 
 /**
  * The operator's screens (T079, T042). Each asks the API who is signed in and
  * sends the visitor to the right screen when it is the wrong one: signed out
- * on `/projects`, a journal or a decision goes to sign in, signed in on `/sign-in` goes to
+ * on `/projects`, a journal, a decision or an agent's keys goes to sign in, signed in on `/sign-in` goes to
  * the projects.
  */
 function DashboardRoute({ screen }: { screen: Screen }) {
@@ -188,7 +193,11 @@ function DashboardRoute({ screen }: { screen: Screen }) {
 }
 
 function DashboardScreen({ api, screen }: { api: DashboardApi; screen: Screen }) {
-  const { projectId, decisionId } = useParams<{ projectId: string; decisionId: string }>()
+  const { projectId, decisionId, agentId } = useParams<{
+    projectId: string
+    decisionId: string
+    agentId: string
+  }>()
   const session = useQuery({
     queryKey: sessionQueryKey,
     queryFn: () => api.session(),
@@ -219,6 +228,18 @@ function DashboardScreen({ api, screen }: { api: DashboardApi; screen: Screen })
       )
     }
     return <DecisionDetails api={api} decisionId={decisionId} projectId={projectId} />
+  }
+  if (screen === 'keys') {
+    if (session.data === null) return <Navigate replace to="/sign-in" />
+    if (projectId === undefined || agentId === undefined) return <Navigate replace to="/projects" />
+    return (
+      <AgentKeys
+        agentId={agentId}
+        api={api}
+        email={session.data.user.email}
+        projectId={projectId}
+      />
+    )
   }
   if (screen === 'journal') {
     if (session.data === null) return <Navigate replace to="/sign-in" />

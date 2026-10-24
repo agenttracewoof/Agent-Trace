@@ -1,6 +1,8 @@
-import { agentKeys, agents, decisions } from '@agenttrace/db'
+import { agentKeys, agents, decisions, users } from '@agenttrace/db'
 import { hexDigest } from '@agenttrace/manifest'
 import {
+  AGENT_KEYS_MAX,
+  type AgentKeysResponse,
   type DecisionDetailsResponse,
   JOURNAL_PAGE_DEFAULT,
   type JournalEntry,
@@ -37,11 +39,12 @@ const throwOnInvalid = (result: { success: boolean; error?: unknown }): void => 
 }
 
 const projectIdSchema = z.uuid()
+const agentIdSchema = z.uuid()
 const decisionIdSchema = hexDigest(16)
 
 /**
- * The operator's reading of a project: its agents (T042), its decisions
- * (FR-016, T039) and each one in full (FR-017, T040). Every
+ * The operator's reading of a project: its agents (T042) and their keys
+ * (T081), its decisions (FR-016, T039) and each one in full (FR-017, T040). Every
  * route sits under `/projects/:projectId`, so the one question that decides
  * access — is this user a member of that project — is asked in one place, and
  * a foreign project answers exactly what an absent one does: 404 (T041).
@@ -94,6 +97,47 @@ export function dashboardRoutes<
       truncated: rows.length > PROJECT_AGENTS_MAX,
     }
     // An agent registers the moment its SDK starts; a cached list would hide it.
+    c.header('Cache-Control', 'no-store')
+    return c.json(body)
+  })
+
+  router.get('/projects/:projectId/agents/:agentId/keys', session, async (c) => {
+    const projectId = await memberProject(c.get('userId'), c.req.param('projectId'))
+    const agentId = agentIdSchema.safeParse(c.req.param('agentId'))
+    if (!agentId.success) throw new AppError('NOT_FOUND', 'Agent not found')
+
+    const [agent] = await db
+      .select({
+        id: agents.id,
+        externalId: agents.externalId,
+        name: agents.name,
+        createdAt: agents.createdAt,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId.data), eq(agents.projectId, projectId)))
+      .limit(1)
+    if (agent === undefined) throw new AppError('NOT_FOUND', 'Agent not found')
+
+    const rows = await db
+      .select({
+        publicKey: agentKeys.publicKey,
+        rotationKind: agentKeys.rotationKind,
+        validFrom: agentKeys.validFrom,
+        validTo: agentKeys.validTo,
+        confirmedBy: users.email,
+      })
+      .from(agentKeys)
+      .leftJoin(users, eq(users.id, agentKeys.confirmedBy))
+      .where(eq(agentKeys.agentId, agent.id))
+      .orderBy(desc(agentKeys.validFrom))
+      .limit(AGENT_KEYS_MAX + 1)
+
+    const body: AgentKeysResponse = {
+      agent: { ...agent, createdAt: agent.createdAt.toISOString() },
+      keys: rows.slice(0, AGENT_KEYS_MAX),
+      truncated: rows.length > AGENT_KEYS_MAX,
+    }
+    // Right after an emergency replacement the owner reads this to see it took.
     c.header('Cache-Control', 'no-store')
     return c.json(body)
   })

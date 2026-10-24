@@ -4,6 +4,7 @@ import {
   DashboardError,
   envLine,
   isSignedOut,
+  isStaleSignIn,
   journalSearch,
   refusalMessage,
   retryUnreachable,
@@ -219,5 +220,80 @@ describe("the journal's calls (T042)", () => {
       createDashboardApi({ baseUrl: BASE, fetch }).journal(PROJECT.id, {}),
     )
     expect(error.message).toBe('The service answered in a shape this page does not know.')
+  })
+})
+
+describe("the agent keys screen's calls (T081)", () => {
+  const AGENT_ID = '0b8e7f2a-5d1c-4e3b-9a6f-1c2d3e4f5a6b'
+  const PUBLIC_KEY = 'cd'.repeat(32)
+
+  it("asks for an agent's keys under its project", async () => {
+    const history = {
+      agent: {
+        id: AGENT_ID,
+        externalId: 'support-bot',
+        name: 'Support bot',
+        createdAt: '2026-10-03T12:00:00.000Z',
+      },
+      keys: [
+        {
+          publicKey: PUBLIC_KEY,
+          rotationKind: 'initial',
+          validFrom: 0,
+          validTo: null,
+          confirmedBy: null,
+        },
+      ],
+      truncated: false,
+    }
+    const { seen, fetch } = fakeFetch(200, history)
+    const body = await createDashboardApi({ baseUrl: BASE, fetch }).agentKeys(PROJECT.id, AGENT_ID)
+
+    expect(seen[0]?.url).toBe(`${BASE}/v1/projects/${PROJECT.id}/agents/${AGENT_ID}/keys`)
+    expect(seen[0]?.init.credentials).toBe('include')
+    expect(body).toEqual(history)
+  })
+
+  it('sends the new public key alone to the emergency replacement', async () => {
+    const accepted = { agentId: AGENT_ID, publicKey: PUBLIC_KEY, effectiveAt: 1_760_000_000_000 }
+    const { seen, fetch } = fakeFetch(200, accepted)
+    const body = await createDashboardApi({ baseUrl: BASE, fetch }).replaceAgentKey(
+      PROJECT.id,
+      AGENT_ID,
+      PUBLIC_KEY,
+    )
+
+    expect(seen[0]?.url).toBe(`${BASE}/v1/projects/${PROJECT.id}/agents/${AGENT_ID}/rotate-admin`)
+    expect(seen[0]?.init.method).toBe('POST')
+    expect(JSON.parse(String(seen[0]?.init.body))).toEqual({ newPublicKey: PUBLIC_KEY })
+    expect(body).toEqual(accepted)
+  })
+
+  it('tells a sign-in too old to confirm apart from a session that ended', async () => {
+    const stale = fakeFetch(401, {
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Sign in again to confirm a key replacement',
+        details: { reason: 'STALE_SIGN_IN', requestId: 'r1' },
+      },
+    })
+    const error = await refusal(
+      createDashboardApi({ baseUrl: BASE, fetch: stale.fetch }).replaceAgentKey(
+        PROJECT.id,
+        AGENT_ID,
+        PUBLIC_KEY,
+      ),
+    )
+    expect(isStaleSignIn(error)).toBe(true)
+    expect(isSignedOut(error)).toBe(false)
+
+    const ended = fakeFetch(401, {
+      error: { code: 'UNAUTHORIZED', message: 'Sign in to continue', details: {} },
+    })
+    const signedOut = await refusal(
+      createDashboardApi({ baseUrl: BASE, fetch: ended.fetch }).agentKeys(PROJECT.id, AGENT_ID),
+    )
+    expect(isStaleSignIn(signedOut)).toBe(false)
+    expect(isSignedOut(signedOut)).toBe(true)
   })
 })

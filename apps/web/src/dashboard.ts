@@ -1,4 +1,6 @@
 import {
+  type AgentKeysResponse,
+  agentKeysResponseSchema,
   type CreateProjectResponse,
   createProjectResponseSchema,
   type DecisionDetailsResponse,
@@ -11,7 +13,9 @@ import {
   type ProjectAgentsResponse,
   projectAgentsResponseSchema,
   type ReissueIngestKeyResponse,
+  type RotateAgentKeyResponse,
   reissueIngestKeyResponseSchema,
+  rotateAgentKeyResponseSchema,
 } from '@agenttrace/shared'
 import { z } from 'zod'
 import type { FetchLike } from './api'
@@ -32,11 +36,14 @@ const REQUEST_TIMEOUT_MS = 15_000
 export class DashboardError extends Error {
   /** `undefined` when the API was never reached. */
   readonly status: number | undefined
+  /** Our `details.reason`, where a status alone does not say what to do. */
+  readonly reason: string | undefined
 
-  constructor(message: string, status: number | undefined) {
+  constructor(message: string, status: number | undefined, reason?: string) {
     super(message)
     this.name = 'DashboardError'
     this.status = status
+    this.reason = reason
   }
 }
 
@@ -46,6 +53,7 @@ export class DashboardError extends Error {
  * answers itself — a wrong code, for one.
  */
 const ourError = z.object({ error: z.object({ code: z.string(), message: z.string() }) })
+const ourReason = z.object({ error: z.object({ details: z.object({ reason: z.string() }) }) })
 const libraryError = z.object({ message: z.string(), code: z.string().optional() })
 
 /** better-auth's codes, in words that tell the operator what to do next. */
@@ -103,8 +111,14 @@ async function call(
   }
 
   const parsed: unknown = await response.json().catch(() => null)
-  if (!response.ok)
-    throw new DashboardError(refusalMessage(response.status, parsed), response.status)
+  if (!response.ok) {
+    const reason = ourReason.safeParse(parsed)
+    throw new DashboardError(
+      refusalMessage(response.status, parsed),
+      response.status,
+      reason.success ? reason.data.error.details.reason : undefined,
+    )
+  }
   return parsed
 }
 
@@ -133,6 +147,12 @@ export interface DashboardApi {
   agents(projectId: string): Promise<ProjectAgentsResponse>
   journal(projectId: string, query: JournalQuery): Promise<JournalResponse>
   decision(projectId: string, decisionId: string): Promise<DecisionDetailsResponse>
+  agentKeys(projectId: string, agentId: string): Promise<AgentKeysResponse>
+  replaceAgentKey(
+    projectId: string,
+    agentId: string,
+    newPublicKey: string,
+  ): Promise<RotateAgentKeyResponse>
 }
 
 /** The journal's query string; a filter left unset is left out, not sent empty. */
@@ -192,8 +212,23 @@ export function createDashboardApi(config: DashboardConfig): DashboardApi {
           `/v1/projects/${encodeURIComponent(projectId)}/decisions${journalSearch(query)}`,
         ),
       ),
+    agentKeys: async (projectId, agentId) =>
+      parseAs(
+        agentKeysResponseSchema,
+        await call(config, 'GET', agentPath(projectId, agentId, 'keys')),
+      ),
+    replaceAgentKey: async (projectId, agentId, newPublicKey) =>
+      parseAs(
+        rotateAgentKeyResponseSchema,
+        await call(config, 'POST', agentPath(projectId, agentId, 'rotate-admin'), {
+          newPublicKey,
+        }),
+      ),
   }
 }
+
+const agentPath = (projectId: string, agentId: string, action: string): string =>
+  `/v1/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}/${action}`
 
 /** The lines an operator pastes into the agent's environment (`packages/sdk/README.md`). */
 export const envLine = (ingestKey: string): string => `AGENTTRACE_INGEST_KEY=${ingestKey}`
@@ -205,8 +240,15 @@ export const envLine = (ingestKey: string): string => `AGENTTRACE_INGEST_KEY=${i
 export const retryUnreachable = (failures: number, cause: Error): boolean =>
   failures < 2 && cause instanceof DashboardError && cause.status === undefined
 
+/**
+ * The session is alive but older than the API accepts for this one action
+ * (T045): the answer is a fresh code, not the sign-in page.
+ */
+export const isStaleSignIn = (cause: unknown): boolean =>
+  cause instanceof DashboardError && cause.status === 401 && cause.reason === 'STALE_SIGN_IN'
+
 export const isSignedOut = (cause: unknown): boolean =>
-  cause instanceof DashboardError && cause.status === 401
+  cause instanceof DashboardError && cause.status === 401 && !isStaleSignIn(cause)
 
 export const sessionQueryKey = ['dashboard-session'] as const
 export const projectsQueryKey = ['dashboard-projects'] as const
@@ -215,3 +257,5 @@ export const decisionDetailsQueryKey = (projectId: string, decisionId: string) =
   ['dashboard-decision', projectId, decisionId] as const
 export const journalQueryKey = (projectId: string, query: JournalQuery) =>
   ['dashboard-journal', projectId, query] as const
+export const agentKeysQueryKey = (projectId: string, agentId: string) =>
+  ['dashboard-agent-keys', projectId, agentId] as const

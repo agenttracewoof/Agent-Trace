@@ -1,7 +1,11 @@
 import { hexDigest } from '@agenttrace/manifest'
 import { z } from 'zod'
 import { decisionStatusSchema } from './ingest.js'
-import { anchorReferenceSchema, publicDecisionResponseSchema } from './public.js'
+import {
+  anchorReferenceSchema,
+  publicDecisionResponseSchema,
+  rotationKindSchema,
+} from './public.js'
 
 /**
  * The dashboard's view of a project's decisions (FR-016, T039). Same rule as
@@ -105,6 +109,32 @@ export const decisionDetailsResponseSchema = publicDecisionResponseSchema.extend
 })
 
 /**
+ * One agent's keys as its project's members see them (FR-027, T081): the
+ * public history (`publicAgentKeysResponseSchema`) plus who vouched for each
+ * emergency replacement — a name the chain does not carry.
+ *
+ * A holder of the ingest key can rotate as often as it likes, so the list
+ * stops at `AGENT_KEYS_MAX`, newest first, and says when it did.
+ */
+export const AGENT_KEYS_MAX = 500
+
+export const agentKeySchema = z.object({
+  publicKey: hexDigest(32),
+  rotationKind: rotationKindSchema,
+  validFrom: z.int().min(0),
+  /** `null` for the key in force. */
+  validTo: z.int().min(0).nullable(),
+  /** The owner who confirmed an emergency replacement; `null` for every other kind. */
+  confirmedBy: z.string().nullable(),
+})
+
+export const agentKeysResponseSchema = z.object({
+  agent: projectAgentSchema,
+  keys: z.array(agentKeySchema),
+  truncated: z.boolean(),
+})
+
+/**
  * The owner's emergency replacement of a lost key (FR-027). Only the new
  * public key: no previous key is left to sign, and `effectiveAt` is the moment
  * of confirmation, which the service records rather than the client claims.
@@ -121,3 +151,5 @@ export type ProjectAgentsResponse = z.infer<typeof projectAgentsResponseSchema>
 export type JournalEntry = z.infer<typeof journalEntrySchema>
 export type JournalResponse = z.infer<typeof journalResponseSchema>
 export type DecisionDetailsResponse = z.infer<typeof decisionDetailsResponseSchema>
+export type AgentKey = z.infer<typeof agentKeySchema>
+export type AgentKeysResponse = z.infer<typeof agentKeysResponseSchema>

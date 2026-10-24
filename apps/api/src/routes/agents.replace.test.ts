@@ -266,6 +266,37 @@ describe('who may confirm', () => {
     expect(await keysOf(fixture.agentId)).toHaveLength(1)
   })
 
+  it('takes a code entered on top of the stale session, as the keys screen asks for one', async () => {
+    // The screen signs in again without signing out first, so the browser still
+    // sends the old cookie; what must reach the replacement is the new session.
+    await ageSessionsOf(fixture.owner.userId, 11)
+    const { rows } = await client.query<{ email: string }>(
+      'SELECT email FROM users WHERE id = $1',
+      [fixture.owner.userId],
+    )
+    const email = rows[0]?.email
+    const old = { cookie: fixture.owner.cookie }
+    await call('POST', '/auth/email-otp/send-verification-otp', {
+      ...old,
+      body: { email, type: 'sign-in' },
+    })
+    const signedIn = await call('POST', '/auth/sign-in/email-otp', {
+      ...old,
+      body: { email, otp: outbox.at(-1)?.code },
+    })
+    expect(signedIn.status).toBe(200)
+    const fresh = signedIn.headers
+      .getSetCookie()
+      .find((value) => value.includes('session_token='))
+      ?.split(';')[0]
+    if (fresh === undefined) throw new Error('the second sign-in set no session cookie')
+
+    expect(fresh).not.toBe(fixture.owner.cookie)
+    expect((await replace((await generateAgentKey()).publicKey, { cookie: fresh })).status).toBe(
+      200,
+    )
+  })
+
   it('accepts a session just inside ten minutes', async () => {
     await ageSessionsOf(fixture.owner.userId, 9)
     expect((await replace((await generateAgentKey()).publicKey)).status).toBe(200)

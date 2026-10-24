@@ -222,6 +222,14 @@ export function Journal({ api, projectId }: { api: DashboardApi; projectId: stri
         filters={filters}
         onChange={change}
       />
+      {filters.agentId !== undefined &&
+      agents.data?.agents.some((agent) => agent.id === filters.agentId) ? (
+        <p className="mt-2">
+          <Link className="underline" to={`/projects/${projectId}/agents/${filters.agentId}/keys`}>
+            Keys of this agent
+          </Link>
+        </p>
+      ) : null}
 
       {'problem' in request ? (
         <p className="mt-4 text-red-800" role="alert">

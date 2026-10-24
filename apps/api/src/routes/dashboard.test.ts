@@ -13,6 +13,8 @@ import {
   toHex,
 } from '@agenttrace/manifest'
 import {
+  AGENT_KEYS_MAX,
+  agentKeysResponseSchema,
   createProjectResponseSchema,
   decisionDetailsResponseSchema,
   type JournalResponse,
@@ -423,6 +425,129 @@ describe("GET /v1/projects/:projectId/agents — the journal's filter (T042)", (
   })
 })
 
+describe('GET /v1/projects/:projectId/agents/:agentId/keys — the key history (T081, FR-027)', () => {
+  let cookie: string
+  let email: string
+  let projectId: string
+  let agent: Agent
+
+  beforeEach(async () => {
+    await client.query('DELETE FROM projects')
+    email = `keys-${randomUUID()}@example.com`
+    cookie = await signIn(email)
+    projectId = await createProject(cookie, 'Keys')
+    agent = await addAgent(projectId, 'trader')
+  })
+
+  const keysPath = (agentId = agent.agentId, project = projectId) =>
+    `/projects/${project}/agents/${agentId}/keys`
+
+  const historyOf = async (agentId = agent.agentId) => {
+    const response = await call('GET', keysPath(agentId), { cookie })
+    expect(response.status).toBe(200)
+    return agentKeysResponseSchema.parse(await response.json())
+  }
+
+  /** A chained rotation, then an emergency one confirmed by the signed-in owner. */
+  async function rotateTwice(): Promise<{ chained: string; administrative: string }> {
+    const chained = hex(32)
+    const administrative = hex(32)
+    const { rows } = await client.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [
+      email,
+    ])
+    await client.query('UPDATE agent_keys SET valid_to = $2 WHERE id = $1', [agent.keyId, T0])
+    const second = await client.query<{ id: string }>(
+      `INSERT INTO agent_keys (agent_id, public_key, valid_from, valid_to, rotation_kind,
+         prev_key_id, rotation_proof)
+       VALUES ($1, $2, $3, $4, 'chained', $5, $6) RETURNING id`,
+      [agent.agentId, chained, T0, T0 + 1_000, agent.keyId, hex(64)],
+    )
+    await client.query(
+      `INSERT INTO agent_keys (agent_id, public_key, valid_from, rotation_kind, prev_key_id,
+         confirmed_by)
+       VALUES ($1, $2, $3, 'administrative', $4, $5)`,
+      [agent.agentId, administrative, T0 + 1_000, second.rows[0]?.id, rows[0]?.id],
+    )
+    return { chained, administrative }
+  }
+
+  it('lists the keys newest first, each with its window, kind and who vouched for it', async () => {
+    const { chained, administrative } = await rotateTwice()
+
+    const body = await historyOf()
+    expect(body.agent).toMatchObject({
+      id: agent.agentId,
+      externalId: 'trader',
+      name: 'Agent trader',
+    })
+    expect(body.truncated).toBe(false)
+    expect(body.keys).toEqual([
+      {
+        publicKey: administrative,
+        rotationKind: 'administrative',
+        validFrom: T0 + 1_000,
+        validTo: null,
+        confirmedBy: email,
+      },
+      {
+        publicKey: chained,
+        rotationKind: 'chained',
+        validFrom: T0,
+        validTo: T0 + 1_000,
+        confirmedBy: null,
+      },
+      expect.objectContaining({ rotationKind: 'initial', validFrom: 0, validTo: T0 }),
+    ])
+  })
+
+  it('gives an agent that never rotated its one initial key, in force', async () => {
+    const body = await historyOf()
+    expect(body.keys).toHaveLength(1)
+    expect(body.keys[0]).toMatchObject({
+      rotationKind: 'initial',
+      validTo: null,
+      confirmedBy: null,
+    })
+  })
+
+  it(`stops at ${AGENT_KEYS_MAX}, keeping the newest, and says so`, async () => {
+    await client.query('UPDATE agent_keys SET valid_to = 1 WHERE id = $1', [agent.keyId])
+    await client.query(
+      `INSERT INTO agent_keys (agent_id, public_key, valid_from, valid_to, rotation_kind,
+         prev_key_id, rotation_proof)
+       SELECT $1, md5(n::text) || md5(n::text), n, n + 1, 'chained', $2, repeat('ab', 64)
+         FROM generate_series(1, $3) AS n`,
+      [agent.agentId, agent.keyId, AGENT_KEYS_MAX],
+    )
+
+    const body = await historyOf()
+    expect(body.keys).toHaveLength(AGENT_KEYS_MAX)
+    expect(body.truncated).toBe(true)
+    expect(body.keys[0]?.validFrom).toBe(AGENT_KEYS_MAX)
+    expect(body.keys.map((key) => key.rotationKind)).not.toContain('initial')
+  })
+
+  it('answers an agent of another project, an absent one and a malformed id alike: 404', async () => {
+    const neighbour = await createProject(cookie, 'Neighbour')
+    const foreign = await addAgent(neighbour, 'other')
+
+    for (const path of [
+      keysPath(foreign.agentId),
+      keysPath(randomUUID()),
+      keysPath('not-a-uuid'),
+      keysPath(agent.agentId, randomUUID()),
+    ]) {
+      expect((await call('GET', path, { cookie })).status, path).toBe(404)
+    }
+  })
+
+  it('answers 401 without a session and is not cached', async () => {
+    expect((await call('GET', keysPath())).status).toBe(401)
+    const response = await call('GET', keysPath(), { cookie })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+  })
+})
+
 const PRIVATE_CONTENT = 'client-position-size-4200'
 
 /** As the SDK sends it: no `Origin`, no cookie, the ingest key in the header. */
@@ -596,6 +721,7 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
     readonly email: string
     readonly projectId: string
     readonly decisionId: string
+    readonly agentId: string
   }
 
   let alice: Tenant
@@ -606,10 +732,15 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
     const cookie = await signIn(email)
     const { projectId, ingestKey } = await createProjectWithKey(cookie, `${label}'s project`)
     const key = await generateAgentKey()
-    await ingest(ingestKey, '/agents', { externalId: label, name: label, publicKey: key.publicKey })
+    const registered = await ingest(ingestKey, '/agents', {
+      externalId: label,
+      name: label,
+      publicKey: key.publicKey,
+    })
+    const { agentId } = (await registered.json()) as { agentId: string }
     const envelope = await signedDecision(key)
     expect((await ingest(ingestKey, '/decisions', envelope)).status).toBe(200)
-    return { cookie, email, projectId, decisionId: envelope.manifest.decisionId }
+    return { cookie, email, projectId, decisionId: envelope.manifest.decisionId, agentId }
   }
 
   beforeAll(async () => {
@@ -620,11 +751,13 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
 
   const absentProject = randomUUID()
   const absentDecision = 'e'.repeat(32)
+  const absentAgent = randomUUID()
 
   /** Every route that names a project, as the dashboard calls it. */
-  const routes = (projectId: string, decisionId: string) =>
+  const routes = (projectId: string, decisionId: string, agentId: string) =>
     [
       ['GET', `/projects/${projectId}/agents`],
+      ['GET', `/projects/${projectId}/agents/${agentId}/keys`],
       ['GET', `/projects/${projectId}/decisions`],
       ['GET', `/projects/${projectId}/decisions?status=pending&limit=1`],
       ['GET', `/projects/${projectId}/decisions/${decisionId}`],
@@ -639,9 +772,13 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
   }
 
   it("answers Bob on Alice's project exactly as on a project that does not exist", async () => {
-    for (const [index, [method, path]] of routes(alice.projectId, alice.decisionId).entries()) {
+    for (const [index, [method, path]] of routes(
+      alice.projectId,
+      alice.decisionId,
+      alice.agentId,
+    ).entries()) {
       const foreign = await call(method, path, { cookie: bob.cookie })
-      const [, absentPath] = routes(absentProject, absentDecision)[index] ?? []
+      const [, absentPath] = routes(absentProject, absentDecision, absentAgent)[index] ?? []
       const absent = await call(method, absentPath ?? '', { cookie: bob.cookie })
 
       expect(foreign.status, `${method} ${path}`).toBe(404)
@@ -701,7 +838,7 @@ describe('tenant isolation: a foreign project is 404, never 403 (T041, FR-018)',
     const statuses: number[] = []
     for (const caller of [alice, bob]) {
       for (const target of [alice, bob]) {
-        for (const [method, path] of routes(target.projectId, target.decisionId)) {
+        for (const [method, path] of routes(target.projectId, target.decisionId, target.agentId)) {
           statuses.push((await call(method, path, { cookie: caller.cookie })).status)
         }
       }
