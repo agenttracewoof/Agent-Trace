@@ -51,6 +51,7 @@ describe('міграції', () => {
       '0003_auth.sql',
       '0004_self_serve.sql',
       '0005_administrative_proof_after_publish.sql',
+      '0006_rotation_anchor_queue.sql',
     ])
   })
 
@@ -110,5 +111,6 @@ describe('DDL придатний до накатування', () => {
 
   it('keeps the partial index on the publisher queue', () => {
     expect(sql).toMatch(/CREATE INDEX "decisions_pending_idx".+WHERE .*'pending'/s)
+    expect(sql).toMatch(/CREATE INDEX "agent_keys_pending_anchor_idx".+WHERE .*'pending'/s)
   })
 })

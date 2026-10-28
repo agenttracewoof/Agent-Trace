@@ -278,6 +278,7 @@ async function rotateAgentKey<
         rotationKind: 'chained',
         prevKeyId: current.id,
         rotationProof: request.proof,
+        anchorStatus: 'pending',
       })
     })
   } catch (cause) {
@@ -389,6 +390,7 @@ async function replaceAgentKey<
         rotationKind: 'administrative',
         prevKeyId: current.id,
         confirmedBy,
+        anchorStatus: 'pending',
       })
     })
   } catch (cause) {

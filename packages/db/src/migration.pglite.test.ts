@@ -19,11 +19,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  */
 
 const dir = fileURLToPath(new URL('../drizzle/', import.meta.url))
-const migration = readdirSync(dir)
+const migrationFiles = readdirSync(dir)
   .filter((name) => name.endsWith('.sql'))
   .sort()
-  .map((name) => readFileSync(dir + name, 'utf8'))
-  .join('\n')
+const read = (names: readonly string[]) =>
+  names.map((name) => readFileSync(dir + name, 'utf8')).join('\n')
+const migration = read(migrationFiles)
 
 const hex = (bytes: number, fill = 'ab') => fill.repeat(bytes)
 const PROJECT = '11111111-1111-4111-8111-111111111111'
@@ -47,8 +48,9 @@ async function rejects(sql: string, params: unknown[] = []): Promise<string> {
 const insertKey = (id: string, publicKey: string, kind: string, extra: Record<string, unknown>) =>
   db.query(
     `INSERT INTO agent_keys (id, agent_id, public_key, valid_from, valid_to, rotation_kind,
-                             prev_key_id, rotation_proof, confirmed_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                             prev_key_id, rotation_proof, confirmed_by, anchor_status,
+                             anchor_signature, anchor_slot, anchored_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       id,
       AGENT,
@@ -59,6 +61,10 @@ const insertKey = (id: string, publicKey: string, kind: string, extra: Record<st
       extra.prevKeyId ?? null,
       extra.rotationProof ?? null,
       extra.confirmedBy ?? null,
+      'anchorStatus' in extra ? extra.anchorStatus : kind === 'initial' ? null : 'pending',
+      extra.anchorSignature ?? null,
+      extra.anchorSlot ?? null,
+      extra.anchoredAt ?? null,
     ],
   )
 
@@ -137,6 +143,15 @@ describe('міграція накочується на справжній Postgr
       `SELECT indexdef FROM pg_indexes WHERE indexname = 'decisions_pending_idx'`,
     )
     expect(indexes.rows[0]?.indexdef).toContain("WHERE (status = 'pending'::decision_status)")
+  })
+
+  it('keeps a partial index on the rotation anchors still to publish', async () => {
+    const indexes = await db.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE indexname = 'agent_keys_pending_anchor_idx'`,
+    )
+    expect(indexes.rows[0]?.indexdef).toContain(
+      "WHERE (anchor_status = 'pending'::decision_status)",
+    )
   })
 })
 
@@ -229,6 +244,57 @@ describe('CHECK-обмеження відхиляють те, заради чо�
     })
     const rows = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM agent_keys')
     expect(rows.rows[0]?.n).toBe(2)
+  })
+
+  it.each([
+    ['an initial key queued for an anchor', 'initial', { anchorStatus: 'pending' }],
+    [
+      'a rotation outside the anchor queue',
+      'chained',
+      { prevKeyId: KEY, rotationProof: hex(64, 'ef'), anchorStatus: null },
+    ],
+    [
+      'a rotation anchored without a slot',
+      'chained',
+      {
+        prevKeyId: KEY,
+        rotationProof: hex(64, 'ef'),
+        anchorStatus: 'anchored',
+        anchorSignature: 'sig',
+      },
+    ],
+    [
+      'a rotation anchored on a slot but without a signature',
+      'chained',
+      {
+        prevKeyId: KEY,
+        rotationProof: hex(64, 'ef'),
+        anchorStatus: 'anchored',
+        anchorSlot: 1,
+        anchoredAt: new Date().toISOString(),
+      },
+    ],
+  ])('refuses a key row that is %s', async (_name, kind, extra) => {
+    let code = 'accepted'
+    try {
+      await insertKey('66666666-6666-4666-8666-666666666667', hex(32, '2c'), kind, extra)
+    } catch (cause) {
+      code = String((cause as { code?: unknown }).code)
+    }
+    expect(code).toBe('23514')
+  })
+
+  it('accepts a rotation whose anchor is sent but not yet confirmed', async () => {
+    await insertKey('77777777-7777-4777-8777-777777777778', hex(32, '3d'), 'chained', {
+      prevKeyId: KEY,
+      rotationProof: hex(64, 'ef'),
+      anchorSignature: 'sig',
+    })
+    const rows = await db.query<{ status: string }>(
+      'SELECT anchor_status AS status FROM agent_keys WHERE id = $1',
+      ['77777777-7777-4777-8777-777777777778'],
+    )
+    expect(rows.rows[0]?.status).toBe('pending')
   })
 
   it('refuses a validity window that ends before it starts', async () => {
@@ -340,9 +406,9 @@ describe('users and membership', () => {
     expect(await rejects('DELETE FROM users WHERE id = $1', [OWNER])).toBe('23001')
   })
 
-  it('accepts an emergency replacement the payer has not signed yet', async () => {
-    // The payer's signature is made by whoever publishes the anchor, so it
-    // arrives after the owner's confirmation, not with it.
+  it('accepts an emergency replacement without a proof', async () => {
+    // Nobody holds the previous key, and the anchor carries a zero signature
+    // (format §10.2): the payer's signature is the transaction's own.
     await insertKey('c0000005-0000-4000-8000-000000000005', hex(32, '7a'), 'administrative', {
       prevKeyId: KEY,
       confirmedBy: OWNER,
@@ -424,3 +490,48 @@ function uppercaseRoot(): [string, unknown[]] {
     ],
   ]
 }
+
+describe('0006 queues the rotations that are already in the table', () => {
+  let before: PGlite | undefined
+
+  afterAll(async () => {
+    await before?.close()
+  })
+
+  it('puts every rotation in the anchor queue and leaves initial keys out of it', async () => {
+    const at = migrationFiles.indexOf('0006_rotation_anchor_queue.sql')
+    expect(at).toBeGreaterThan(0)
+
+    before = await PGlite.create()
+    await before.exec(read(migrationFiles.slice(0, at)))
+    await before.query(`INSERT INTO projects (id, name, ingest_key_hash) VALUES ($1, 'p', $2)`, [
+      PROJECT,
+      hex(32, '0f'),
+    ])
+    await before.query(
+      `INSERT INTO agents (id, project_id, external_id, name) VALUES ($1, $2, 'a', 'A')`,
+      [AGENT, PROJECT],
+    )
+    await before.query(
+      `INSERT INTO agent_keys (id, agent_id, public_key, valid_from, valid_to, rotation_kind)
+       VALUES ($1, $2, $3, $4, $5, 'initial')`,
+      [KEY, AGENT, hex(32, '1a'), DECIDED_AT, DECIDED_AT + 1],
+    )
+    await before.query(
+      `INSERT INTO agent_keys (id, agent_id, public_key, valid_from, rotation_kind, prev_key_id,
+                               rotation_proof)
+       VALUES ($1, $2, $3, $4, 'chained', $5, $6)`,
+      ['77777777-7777-4777-8777-777777777777', AGENT, hex(32, '3c'), DECIDED_AT + 1, KEY, hex(64)],
+    )
+
+    await before.exec(read(migrationFiles.slice(at)))
+
+    const rows = await before.query<{ kind: string; status: string | null }>(
+      'SELECT rotation_kind AS kind, anchor_status AS status FROM agent_keys ORDER BY valid_from',
+    )
+    expect(rows.rows).toEqual([
+      { kind: 'initial', status: null },
+      { kind: 'chained', status: 'pending' },
+    ])
+  }, 60_000)
+})

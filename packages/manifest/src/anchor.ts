@@ -137,6 +137,14 @@ export function decodeDecisionAnchor(bytes: Uint8Array): DecisionAnchor {
   })
 }
 
+/**
+ * Nobody holds the previous key in an administrative replacement, and a
+ * signature by the service would prove no more than the transaction already
+ * does: the payer signs the transaction that carries the anchor (format §10.2).
+ * Zeros rather than a free field, so the slot can never be read as a proof.
+ */
+export const ADMINISTRATIVE_ROTATION_SIGNATURE = '00'.repeat(KEY_ROTATION_ANCHOR_LAYOUT.signature)
+
 export const keyRotationAnchorSchema = z
   .strictObject({
     version: z.literal(MANIFEST_VERSION),
@@ -150,6 +158,12 @@ export const keyRotationAnchorSchema = z
   .refine((value) => value.newPubkey !== value.prevPubkey, {
     error: 'prevPubkey must differ from newPubkey',
   })
+  .refine(
+    (value) =>
+      value.rotationKind !== ROTATION_KIND.administrative ||
+      value.signature === ADMINISTRATIVE_ROTATION_SIGNATURE,
+    { error: 'an administrative replacement carries a zero signature' },
+  )
 
 export type KeyRotationAnchor = z.infer<typeof keyRotationAnchorSchema>
 

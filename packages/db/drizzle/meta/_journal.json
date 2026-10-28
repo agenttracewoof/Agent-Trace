@@ -43,6 +43,13 @@
       "when": 1792310712885,
       "tag": "0005_administrative_proof_after_publish",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793178475183,
+      "tag": "0006_rotation_anchor_queue",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,14 @@
 import { agentKeys, decisions } from '@agenttrace/db'
-import { ANCHOR_KIND, encodeDecisionAnchor } from '@agenttrace/manifest'
+import {
+  ADMINISTRATIVE_ROTATION_SIGNATURE,
+  ANCHOR_KIND,
+  encodeDecisionAnchor,
+  encodeKeyRotationAnchor,
+  ROTATION_KIND,
+} from '@agenttrace/manifest'
 import type { Keypair } from '@solana/web3.js'
 import { and, asc, eq, lte } from 'drizzle-orm'
-import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
+import { alias, type PgDatabase, type PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { buildAnchorTransaction } from './memo.js'
 
 /**
@@ -11,6 +17,11 @@ import { buildAnchorTransaction } from './memo.js'
  * ніж здається: підпис транзакції зберігається **до** відправки, бо інакше
  * обрив між `sendRawTransaction` і підтвердженням лишав би рядок без жодного
  * сліду, а наступний прохід ставив би другий якір на те саме рішення (R10).
+ *
+ * A key rotation goes the same way (T068, FR-022/FR-027): its anchor is what
+ * lets a verifier follow the agent's identity from the chain alone, and a
+ * second anchor of the same rotation would be as wrong as a second one of a
+ * decision.
  */
 
 /** Після стількох невдалих спроб рішення стає `failed` і цикл його більше не бере. */
@@ -131,51 +142,64 @@ const confirmed = (status: SignatureStatusLike): boolean =>
  */
 type AnyPgDatabase = PgDatabase<PgQueryResultHKT, Record<string, unknown>>
 
+interface AnchorChange {
+  readonly status?: 'pending' | 'anchored' | 'failed'
+  readonly attempts?: number
+  readonly anchorSignature?: string | null
+  readonly anchorSlot?: number
+  readonly anchoredAt?: Date
+  readonly nextAttemptAt?: Date
+}
+
+/** The only place the two tables differ for the loop: where the row lives and what its status is called. */
+type ApplyChange = (db: AnyPgDatabase, id: string, change: AnchorChange) => Promise<void>
+
+const decisionChange: ApplyChange = async (db, id, change) => {
+  await db.update(decisions).set(change).where(eq(decisions.id, id))
+}
+
+const rotationChange: ApplyChange = async (db, id, { status, ...rest }) => {
+  await db
+    .update(agentKeys)
+    .set({ ...rest, ...(status === undefined ? {} : { anchorStatus: status }) })
+    .where(eq(agentKeys.id, id))
+}
+
 interface PendingRow {
   readonly id: string
-  readonly agentPubkey: string
-  readonly root: string
-  readonly signature: string
-  readonly decidedAt: number
   readonly attempts: number
   readonly anchorSignature: string | null
+  readonly apply: ApplyChange
+  /** Байти якоря і адреси, за якими його знайдуть. Лінивий: невдале кодування — це спроба, що не вдалася. */
+  readonly anchor: () => { readonly payload: Uint8Array; readonly indexedBy: readonly string[] }
 }
 
 async function markAnchored(
   db: AnyPgDatabase,
-  id: string,
+  row: PendingRow,
   signature: string,
   slot: number,
 ): Promise<void> {
-  await db
-    .update(decisions)
-    .set({
-      status: 'anchored',
-      anchorSignature: signature,
-      anchorSlot: slot,
-      anchoredAt: new Date(),
-    })
-    .where(eq(decisions.id, id))
+  await row.apply(db, row.id, {
+    status: 'anchored',
+    anchorSignature: signature,
+    anchorSlot: slot,
+    anchoredAt: new Date(),
+  })
 }
 
-async function defer(db: AnyPgDatabase, id: string, ms: number): Promise<void> {
-  await db
-    .update(decisions)
-    .set({ nextAttemptAt: new Date(Date.now() + ms) })
-    .where(eq(decisions.id, id))
+async function defer(db: AnyPgDatabase, row: PendingRow, ms: number): Promise<void> {
+  await row.apply(db, row.id, { nextAttemptAt: new Date(Date.now() + ms) })
 }
 
 async function failAttempt(db: AnyPgDatabase, row: PendingRow): Promise<void> {
   const attempts = row.attempts + 1
-  await db
-    .update(decisions)
-    .set({
-      attempts,
-      anchorSignature: null,
-      status: attempts >= ATTEMPT_CEILING ? 'failed' : 'pending',
-      nextAttemptAt: new Date(Date.now() + backoffMs(attempts)),
-    })
-    .where(eq(decisions.id, row.id))
+  await row.apply(db, row.id, {
+    attempts,
+    anchorSignature: null,
+    status: attempts >= ATTEMPT_CEILING ? 'failed' : 'pending',
+    nextAttemptAt: new Date(Date.now() + backoffMs(attempts)),
+  })
 }
 
 /**
@@ -232,12 +256,12 @@ async function resolveInFlight(
     const status = statuses.get(row.anchorSignature as string) ?? null
 
     if (status != null && confirmed(status)) {
-      await markAnchored(db, row.id, row.anchorSignature as string, status.slot)
+      await markAnchored(db, row, row.anchorSignature as string, status.slot)
       published += 1
     } else if (status != null && status.err !== null) {
       await failAttempt(db, row)
     } else if (status != null) {
-      await defer(db, row.id, CONFIRM_POLL_MS)
+      await defer(db, row, CONFIRM_POLL_MS)
     } else {
       // Підпису в ланцюгу немає, а вікно блокхешу вже минуло (рядок повернувся
       // сюди не раніше, ніж через BLOCKHASH_EXPIRY_MS) — транзакція не долетить.
@@ -273,16 +297,7 @@ async function sendOne(
   try {
     const transaction = buildAnchorTransaction({
       payer: config.payer.publicKey,
-      payload: encodeDecisionAnchor({
-        version: 1,
-        kind: ANCHOR_KIND.decision,
-        agentPubkey: row.agentPubkey,
-        root: row.root,
-        decisionId: row.id.replaceAll('-', ''),
-        decidedAt: row.decidedAt,
-        signature: row.signature,
-      }),
-      indexedBy: [row.agentPubkey],
+      ...row.anchor(),
       recentBlockhash: blockhash,
     })
     transaction.sign(config.payer)
@@ -294,7 +309,7 @@ async function sendOne(
     // Підпис лягає в базу **до** відправки: інакше обрив між `sendRawTransaction`
     // і підтвердженням лишив би рядок без сліду, а наступний прохід поставив би
     // другий якір на те саме рішення (R10).
-    await db.update(decisions).set({ anchorSignature }).where(eq(decisions.id, row.id))
+    await row.apply(db, row.id, { anchorSignature })
     await chain.sendRawTransaction(transaction.serialize())
 
     return { row, anchorSignature }
@@ -331,7 +346,7 @@ async function confirmBatch(
       if (status == null) continue
 
       if (confirmed(status)) {
-        await markAnchored(db, row.id, anchorSignature, status.slot)
+        await markAnchored(db, row, anchorSignature, status.slot)
         published += 1
         waiting.delete(anchorSignature)
       } else if (status.err !== null) {
@@ -343,30 +358,12 @@ async function confirmBatch(
 
   // Те, що не підтвердилося за відведені поли, не втрачене: підпис у базі, і
   // наступний прохід почне саме з нього — після вікна блокхешу, не раніше.
-  for (const row of waiting.values()) await defer(db, row.id, BLOCKHASH_EXPIRY_MS)
+  for (const row of waiting.values()) await defer(db, row, BLOCKHASH_EXPIRY_MS)
 
   return published
 }
 
-/**
- * Один прохід черги. Рішення незалежні одне від одного: падіння на одному не
- * зупиняє решту — інакше єдиний зіпсований рядок тримав би всю чергу.
- *
- * Прохід зроблений **пакетним** (T071): спільні блокхеш і комісії, паралельні
- * відправки, одне опитування статусів на всіх. До цього кожне рішення робило
- * два власні запити й чекало власного підтвердження, тож пачка з десяти йшла
- * ~18 с при бюджеті SC-001 у 10 с — заміряно наскрізним сценарієм, а не оцінено.
- *
- * Блокувань немає навмисно: publisher — один процес (`PLAN.md` → чому окремий
- * сервіс), і `SELECT … FOR UPDATE` тут захищав би від конкурента, якого немає.
- */
-export async function publishPending(
-  db: AnyPgDatabase,
-  chain: ChainClient,
-  config: PublisherConfig,
-): Promise<number> {
-  const sleep = config.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)))
-
+async function pendingDecisions(db: AnyPgDatabase, limit: number): Promise<PendingRow[]> {
   const rows = await db
     .select({
       id: decisions.id,
@@ -381,19 +378,113 @@ export async function publishPending(
     .innerJoin(agentKeys, eq(agentKeys.id, decisions.agentKeyId))
     .where(and(eq(decisions.status, 'pending'), lte(decisions.nextAttemptAt, new Date())))
     .orderBy(asc(decisions.nextAttemptAt))
-    .limit(config.batchSize)
+    .limit(limit)
+
+  return rows.map((row) => ({
+    id: row.id,
+    attempts: row.attempts,
+    anchorSignature: row.anchorSignature,
+    apply: decisionChange,
+    anchor: () => ({
+      payload: encodeDecisionAnchor({
+        version: 1,
+        kind: ANCHOR_KIND.decision,
+        agentPubkey: row.agentPubkey,
+        root: row.root,
+        decisionId: row.id.replaceAll('-', ''),
+        decidedAt: row.decidedAt,
+        signature: row.signature,
+      }),
+      indexedBy: [row.agentPubkey],
+    }),
+  }))
+}
+
+async function pendingRotations(db: AnyPgDatabase, limit: number): Promise<PendingRow[]> {
+  const previous = alias(agentKeys, 'previous')
+  const rows = await db
+    .select({
+      id: agentKeys.id,
+      newPubkey: agentKeys.publicKey,
+      prevPubkey: previous.publicKey,
+      rotationKind: agentKeys.rotationKind,
+      effectiveAt: agentKeys.validFrom,
+      proof: agentKeys.rotationProof,
+      attempts: agentKeys.attempts,
+      anchorSignature: agentKeys.anchorSignature,
+    })
+    .from(agentKeys)
+    .innerJoin(previous, eq(previous.id, agentKeys.prevKeyId))
+    .where(and(eq(agentKeys.anchorStatus, 'pending'), lte(agentKeys.nextAttemptAt, new Date())))
+    .orderBy(asc(agentKeys.nextAttemptAt))
+    .limit(limit)
+
+  return rows.map((row) => ({
+    id: row.id,
+    attempts: row.attempts,
+    anchorSignature: row.anchorSignature,
+    apply: rotationChange,
+    anchor: () => ({
+      payload: encodeKeyRotationAnchor({
+        version: 1,
+        kind: ANCHOR_KIND.keyRotation,
+        newPubkey: row.newPubkey,
+        prevPubkey: row.prevPubkey,
+        effectiveAt: row.effectiveAt,
+        ...(row.rotationKind === 'administrative'
+          ? {
+              rotationKind: ROTATION_KIND.administrative,
+              signature: ADMINISTRATIVE_ROTATION_SIGNATURE,
+            }
+          : { rotationKind: ROTATION_KIND.chained, signature: row.proof }),
+      }),
+      indexedBy: [row.prevPubkey, row.newPubkey],
+    }),
+  }))
+}
+
+/**
+ * Один прохід черги. Рішення незалежні одне від одного: падіння на одному не
+ * зупиняє решту — інакше єдиний зіпсований рядок тримав би всю чергу.
+ *
+ * Прохід зроблений **пакетним** (T071): спільні блокхеш і комісії, паралельні
+ * відправки, одне опитування статусів на всіх. До цього кожне рішення робило
+ * два власні запити й чекало власного підтвердження, тож пачка з десяти йшла
+ * ~18 с при бюджеті SC-001 у 10 с — заміряно наскрізним сценарієм, а не оцінено.
+ *
+ * Блокувань немає навмисно: publisher — один процес (`PLAN.md` → чому окремий
+ * сервіс), і `SELECT … FOR UPDATE` тут захищав би від конкурента, якого немає.
+ *
+ * Rotations go first in the pass but hold nothing back: a decision of the new
+ * key is published whether or not its rotation anchor is through yet. The line
+ * between the keys is `effectiveAt` inside the anchor, not the order of
+ * transactions, and a rotation stuck at `failed` shows up to the verifier as
+ * the break it is instead of stopping the agent's whole queue.
+ */
+export async function publishPending(
+  db: AnyPgDatabase,
+  chain: ChainClient,
+  config: PublisherConfig,
+): Promise<number> {
+  const sleep = config.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)))
+
+  const rows = [
+    ...(await pendingRotations(db, config.batchSize)),
+    ...(await pendingDecisions(db, config.batchSize)),
+  ]
 
   if (rows.length === 0) return 0
 
   const inFlight = await resolveInFlight(db, chain, rows)
-  const toSend = [...rows.filter((row) => row.anchorSignature === null), ...inFlight.resend]
+  const resend = new Set(inFlight.resend)
+  const toSend = rows.filter((row) => row.anchorSignature === null || resend.has(row))
   if (toSend.length === 0) return inFlight.published
 
   if (exceedsFeeCeiling(await chain.getRecentPrioritizationFees(), config.maxPriorityLamports)) {
     // Затор — не провина рішення, тож лічильник спроб не росте: інакше рішення
     // стало б `failed` за чужу ціну. Відкладається вся пачка: ціна в мережі
     // одна на всіх, і питати її для кожного рядка окремо нема сенсу.
-    for (const row of toSend) await defer(db, row.id, backoffMs(row.attempts + 1))
+    for (const row of toSend) await defer(db, row, backoffMs(row.attempts + 1))
     return inFlight.published
   }
 

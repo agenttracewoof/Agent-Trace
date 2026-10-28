@@ -411,8 +411,9 @@ describe('історія ключів агента (FR-022)', () => {
   it('answers to a replaced key too, because old decisions name no other address', async () => {
     const [initial] = await rows('SELECT id, agent_id FROM agent_keys')
     await rows(
-      `INSERT INTO agent_keys (agent_id, public_key, valid_from, rotation_kind, prev_key_id, rotation_proof)
-       VALUES ($1, $2, 1760000000000, 'chained', $3, $4)`,
+      `INSERT INTO agent_keys (agent_id, public_key, valid_from, rotation_kind, prev_key_id, rotation_proof,
+                               anchor_status)
+       VALUES ($1, $2, 1760000000000, 'chained', $3, $4, 'pending')`,
       [initial?.agent_id, rotatedKey.publicKey, initial?.id, 'ab'.repeat(64)],
     )
     await rows('UPDATE agent_keys SET valid_to = 1760000000000 WHERE id = $1', [initial?.id])

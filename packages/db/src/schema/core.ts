@@ -146,7 +146,11 @@ export const agentKeys = pgTable(
     prevKeyId: uuid('prev_key_id').references((): AnyPgColumn => agentKeys.id, {
       onDelete: 'restrict',
     }),
-    /** Підпис із якоря ротації: попереднім ключем (chained) або платником (administrative). */
+    /**
+     * Signature from the rotation anchor, made by the previous key. Only a
+     * chained rotation has one: an administrative anchor carries zeros, and the
+     * payer's signature is the transaction's own (format §10.2).
+     */
     rotationProof: hex('rotation_proof', 64),
     /**
      * Who confirmed the emergency replacement in the dashboard (FR-027).
@@ -157,6 +161,18 @@ export const agentKeys = pgTable(
       onDelete: 'restrict',
     }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+
+    /**
+     * Publication of the rotation anchor (T068), the same states and the same
+     * sign-before-send order as a decision's. `null` on an initial key: there
+     * is no `kind = 1` anchor for a key nobody rotated.
+     */
+    anchorStatus: decisionStatus('anchor_status'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    anchorSignature: varchar('anchor_signature', { length: 88 }),
+    anchorSlot: bigint('anchor_slot', { mode: 'number' }),
+    anchoredAt: timestamp('anchored_at', { withTimezone: true }),
   },
   (table) => [
     /** Один і той самий Ed25519-ключ не може належати двом агентам. */
@@ -172,8 +188,7 @@ export const agentKeys = pgTable(
      * приховати неможливо» трималося б на коді, який цей рядок пише. Початковий
      * ключ не має ані попередника, ані доказу; обидва види ротації мають
      * попередника; аварійна додатково потребує імені того, хто її підтвердив.
-     * Proof of an administrative row may still be missing: the payer signs it
-     * when it publishes the anchor, after the owner has confirmed.
+     * An administrative row has no proof to keep: see `rotationProof`.
      */
     check(
       'agent_keys_rotation_shape',
@@ -188,6 +203,19 @@ export const agentKeys = pgTable(
         OR (${table.rotationKind} = 'administrative'
           AND ${table.prevKeyId} IS NOT NULL
           AND ${table.confirmedBy} IS NOT NULL)
+      `,
+    ),
+    index('agent_keys_pending_anchor_idx')
+      .on(table.nextAttemptAt)
+      .where(sql`${table.anchorStatus} = 'pending'`),
+    /** Same shape as `decisions_anchor_shape`, plus: a rotation is always in the queue. */
+    check(
+      'agent_keys_anchor_shape',
+      sql`
+        (${table.rotationKind} = 'initial') = (${table.anchorStatus} IS NULL)
+        AND (${table.anchorStatus} IS NOT DISTINCT FROM 'anchored') = (${table.anchorSlot} IS NOT NULL)
+        AND (${table.anchorSlot} IS NULL) = (${table.anchoredAt} IS NULL)
+        AND (${table.anchorSlot} IS NULL OR ${table.anchorSignature} IS NOT NULL)
       `,
     ),
     check(

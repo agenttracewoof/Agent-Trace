@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ADMINISTRATIVE_ROTATION_SIGNATURE,
   ANCHOR_KIND,
   ANCHOR_MEMO_MAX_BYTES,
   anchorKindOf,
@@ -139,12 +140,33 @@ describe('encodeKeyRotationAnchor', () => {
   it('refuses a decision anchor passed in by mistake', () => {
     expect(() => encodeKeyRotationAnchor(anchor)).toThrow()
   })
+
+  it('carries no signature of its own in an administrative replacement', () => {
+    const bytes = encodeKeyRotationAnchor({
+      ...rotation,
+      rotationKind: ROTATION_KIND.administrative,
+      signature: ADMINISTRATIVE_ROTATION_SIGNATURE,
+    })
+    expect(bytes[66]).toBe(ROTATION_KIND.administrative)
+    expect(bytes.subarray(75, 139).every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('refuses an administrative replacement that pretends to carry a signature', () => {
+    const signed = { ...rotation, rotationKind: ROTATION_KIND.administrative }
+    expect(() => encodeKeyRotationAnchor(signed)).toThrow(/administrative/)
+  })
 })
 
 describe('decodeKeyRotationAnchor', () => {
   it('round-trips both ways a key can be replaced', () => {
-    for (const rotationKind of [ROTATION_KIND.chained, ROTATION_KIND.administrative]) {
-      const value: KeyRotationAnchor = { ...rotation, rotationKind }
+    for (const value of [
+      rotation,
+      {
+        ...rotation,
+        rotationKind: ROTATION_KIND.administrative,
+        signature: ADMINISTRATIVE_ROTATION_SIGNATURE,
+      },
+    ] satisfies KeyRotationAnchor[]) {
       const bytes = encodeKeyRotationAnchor(value)
       expect(decodeKeyRotationAnchor(bytes)).toEqual(value)
       expect(encodeKeyRotationAnchor(decodeKeyRotationAnchor(bytes))).toEqual(bytes)
@@ -173,6 +195,12 @@ describe('decodeKeyRotationAnchor', () => {
     const bytes = encodeKeyRotationAnchor(rotation)
     bytes.set(fromHex('ffffffffffffffff'), 67)
     expect(() => decodeKeyRotationAnchor(bytes)).toThrow(/effectiveAt/)
+  })
+
+  it('refuses an administrative replacement read with a signature in it', () => {
+    const bytes = encodeKeyRotationAnchor(rotation)
+    bytes[66] = ROTATION_KIND.administrative
+    expect(() => decodeKeyRotationAnchor(bytes)).toThrow(/administrative/)
   })
 })
 

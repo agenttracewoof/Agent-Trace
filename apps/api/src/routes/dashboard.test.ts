@@ -458,14 +458,14 @@ describe('GET /v1/projects/:projectId/agents/:agentId/keys — the key history (
     await client.query('UPDATE agent_keys SET valid_to = $2 WHERE id = $1', [agent.keyId, T0])
     const second = await client.query<{ id: string }>(
       `INSERT INTO agent_keys (agent_id, public_key, valid_from, valid_to, rotation_kind,
-         prev_key_id, rotation_proof)
-       VALUES ($1, $2, $3, $4, 'chained', $5, $6) RETURNING id`,
+         prev_key_id, rotation_proof, anchor_status)
+       VALUES ($1, $2, $3, $4, 'chained', $5, $6, 'pending') RETURNING id`,
       [agent.agentId, chained, T0, T0 + 1_000, agent.keyId, hex(64)],
     )
     await client.query(
       `INSERT INTO agent_keys (agent_id, public_key, valid_from, rotation_kind, prev_key_id,
-         confirmed_by)
-       VALUES ($1, $2, $3, 'administrative', $4, $5)`,
+         confirmed_by, anchor_status)
+       VALUES ($1, $2, $3, 'administrative', $4, $5, 'pending')`,
       [agent.agentId, administrative, T0 + 1_000, second.rows[0]?.id, rows[0]?.id],
     )
     return { chained, administrative }
@@ -514,8 +514,9 @@ describe('GET /v1/projects/:projectId/agents/:agentId/keys — the key history (
     await client.query('UPDATE agent_keys SET valid_to = 1 WHERE id = $1', [agent.keyId])
     await client.query(
       `INSERT INTO agent_keys (agent_id, public_key, valid_from, valid_to, rotation_kind,
-         prev_key_id, rotation_proof)
-       SELECT $1, md5(n::text) || md5(n::text), n, n + 1, 'chained', $2, repeat('ab', 64)
+         prev_key_id, rotation_proof, anchor_status)
+       SELECT $1, md5(n::text) || md5(n::text), n, n + 1, 'chained', $2, repeat('ab', 64),
+              'pending'
          FROM generate_series(1, $3) AS n`,
       [agent.agentId, agent.keyId, AGENT_KEYS_MAX],
     )
